@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#1b1916">
+  <title>Каменный двор — плитка и шлакоблок</title>
+  <meta name="description" content="Тротуарная плитка, шлакоблок и бордюр со склада. Каталог, калькулятор площади, избранное и корзина.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect fill='%23f4efe7' width='32' height='32'/%3E%3Crect x='4' y='6' width='11' height='8' fill='%239d3b32'/%3E%3Crect x='17' y='6' width='11' height='8' fill='%238d8d86'/%3E%3Crect x='4' y='17' width='11' height='8' fill='%236d4b34'/%3E%3Crect x='17' y='17' width='11' height='8' fill='%233e4246'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&family=Onest:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css">
+  <link rel="stylesheet" href="css/admin.css">
+</head>
+<body>
+  <a class="skip" href="#view" data-t="chrome.skip">К содержимому</a>
+  <div class="topbar">
+    <div class="wrap topbar-in">
+      <span data-t="chrome.top1">Отгрузка со склада в день оплаты</span>
+      <span data-t="chrome.top2">Доставка манипулятором по городу и области</span>
+    </div>
+  </div>
+  <header class="header">
+    <div class="wrap header-in">
+      <a class="logo" href="#/">
+        <span class="logo-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+        <span><strong data-t="chrome.logo">Каменный двор</strong><small data-t="chrome.logoSub">плитка и шлакоблок</small></span>
+      </a>
+      <button class="burger" type="button" data-t-aria="chrome.menu" aria-label="Меню" aria-expanded="false" data-action="menu"><span></span><span></span></button>
+      <nav class="nav" id="nav">
+        <a href="#/catalog" data-page="catalog" data-t="chrome.navCatalog">Каталог</a>
+        <a href="#/calc" data-page="calc" data-t="chrome.navCalc">Калькулятор</a>
+        <a href="#/delivery" data-page="delivery" data-t="chrome.navDelivery">Доставка</a>
+        <a href="#/contacts" data-page="contacts" data-t="chrome.navContacts">Контакты</a>
+        <a class="nav-phone" data-fill-href="phoneHref" href="tel:+79001234567"><span data-fill="phone">+7 (900) 123-45-67</span></a>
+        <button type="button" class="btn btn-ink nav-call" data-action="callback" data-t="chrome.navCall">Заказать звонок</button>
+      </nav>
+      <div class="header-tools">
+        <a class="phone" data-fill-href="phoneHref" href="tel:+79001234567">
+          <small data-fill="hours">Пн–Сб, 8:00–18:00</small>
+          <strong data-fill="phone">+7 (900) 123-45-67</strong>
+        </a>
+        <button type="button" class="btn btn-line paper-line callback-btn" data-action="callback" data-t="chrome.navCallShort">Звонок</button>
+        <nav class="account" data-t-aria="chrome.account" aria-label="Покупки">
+          <a class="cart-link" href="#/fav" data-page="fav">
+            <span class="tool-mark">
+              <svg class="tool-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19.4S5.2 15.2 5.2 10.4A3.6 3.6 0 0 1 12 8.3a3.6 3.6 0 0 1 6.8 2.1c0 4.8-6.8 9-6.8 9z"/></svg>
+              <b id="fav-count">0</b>
+            </span>
+            <span class="tool-label" data-t="chrome.navFav">Избранное</span>
+          </a>
+          <a class="cart-link" href="#/orders" data-page="orders">
+            <span class="tool-mark">
+              <svg class="tool-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8.4 12 4.6l8 3.8V19l-8 3.4L4 19z"/><path d="M4 8.4 12 12.2 20 8.4M12 12.2V22.4"/></svg>
+              <b id="order-count">0</b>
+            </span>
+            <span class="tool-label" data-t="chrome.navOrders">Заказы</span>
+          </a>
+          <a class="cart-link" href="#/cart" data-page="cart">
+            <span class="tool-mark">
+              <svg class="tool-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 10c0-2.4 1.7-4 4-4s4 1.6 4 4"/><path d="M4.5 10h15l-1.5 9.2h-12z"/><path d="M5.2 13.4h13.4M5.8 16.6h12.2"/></svg>
+              <b id="cart-count">0</b>
+            </span>
+            <span class="tool-label" data-t="chrome.navCart">Корзина</span>
+          </a>
+        </nav>
+      </div>
+    </div>
+  </header>
+  <main id="view"></main>
+  <footer class="footer" id="footer"></footer>
+  <div class="toast" id="toast" hidden role="status"></div>
+  <div class="modal" id="callback" hidden>
+    <div class="modal-bg" data-action="close-modal"></div>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="callback-title">
+      <button type="button" class="modal-close" data-action="close-modal" data-t-aria="chrome.close" aria-label="Закрыть">×</button>
+      <h2 id="callback-title" data-t="contacts.callTitle">Перезвонить</h2>
+      <form id="callback-form">
+        <label class="field"><span data-t="contacts.name">Имя</span><input name="name" autocomplete="name"></label>
+        <label class="field"><span data-t="contacts.phone">Телефон</span><input name="phone" autocomplete="tel" inputmode="tel"></label>
+        <label class="field"><span data-t="contacts.callNeed">Коротко, что нужно</span><input name="comment"></label>
+        <p class="form-error" hidden></p>
+        <button class="btn" type="submit" data-t="contacts.submit">Жду звонка</button>
+      </form>
+      <div id="callback-thanks" hidden>
+        <p></p>
+        <button type="button" class="btn btn-ink" data-action="close-modal" data-t="chrome.close">Закрыть</button>
+      </div>
+    </div>
+  </div>
+  <noscript><p class="wrap">Включите JavaScript: каталог собирается в браузере.</p></noscript>
+  <script src="js/data.js"></script>
+  <script src="js/copy.js"></script>
+  <script src="js/admin.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
