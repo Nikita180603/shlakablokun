@@ -16,6 +16,7 @@
     q: "",
     order: null,
     calc: {
+      project: "yard",
       productId: "kirpich-60",
       colorId: "gray",
       amount: 40,
@@ -24,11 +25,22 @@
       borderMeters: 24,
       withBase: true,
       delivery: "city",
+      yardLength: 8,
+      yardWidth: 5,
+      pattern: "straight",
+      houseLength: 10,
+      houseWidth: 8,
+      houseHeight: 3,
+      houseOpenings: 12,
     },
   };
 
   let cart = [];
   let favs = [];
+  let compare = [];
+  let buyBarWatch = null;
+  let promoTimer = 0;
+  let promoWatch = null;
 
   function productById(id) {
     return PRODUCTS.find((p) => p.id === id) || null;
@@ -75,6 +87,30 @@
     return /^#[0-9a-fA-F]{3,8}$/.test(hex || "") ? hex : "#8d8d86";
   }
 
+  function fullHex(hex) {
+    const raw = safeHex(hex).replace("#", "");
+    return raw.length === 3 ? raw.split("").map((ch) => ch + ch).join("") : raw.slice(0, 6);
+  }
+
+  function shadeHex(hex, k) {
+    const n = parseInt(fullHex(hex), 16);
+    const ch = (shift) => {
+      const v = (n >> shift) & 255;
+      return Math.max(0, Math.min(255, Math.round(v * k)))
+        .toString(16)
+        .padStart(2, "0");
+    };
+    return "#" + ch(16) + ch(8) + ch(0);
+  }
+
+  function colorNeedsWash(hex) {
+    const n = parseInt(fullHex(hex), 16);
+    const r = (n >> 16) & 255;
+    const g = (n >> 8) & 255;
+    const b = n & 255;
+    return Math.max(r, g, b) - Math.min(r, g, b) >= 24;
+  }
+
   function formatMoney(n) {
     const rounded = Math.round(Number(n) * 10) / 10;
     const hasFrac = Math.abs(rounded - Math.round(rounded)) > 0.001;
@@ -119,6 +155,10 @@
     return String(v).replace(/\D/g, "").length >= 10;
   }
 
+  function validMail(v) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v).trim());
+  }
+
   function parseRoute() {
     const raw = (location.hash || "#/").replace(/^#/, "");
     const path = raw.split("?")[0];
@@ -127,45 +167,38 @@
     return { parts, query };
   }
 
+  function loadList(key, storage, normalize) {
+    try {
+      const raw = JSON.parse(storage.getItem(key) || "[]");
+      return Array.isArray(raw) ? raw.map(normalize).filter(Boolean) : [];
+    } catch (e) {
+      return [];
+    }
+  }
+  function saveList(key, storage, value) {
+    try { storage.setItem(key, JSON.stringify(value)); } catch (e) {}
+  }
   function loadCart() {
-    try {
-      const raw = JSON.parse(localStorage.getItem("kd-cart-v1") || "[]");
-      if (!Array.isArray(raw)) return [];
-      return raw
-        .filter((i) => productById(i.id) && Number(i.qty) > 0)
-        .map((i) => ({ id: i.id, colorId: i.colorId, qty: Number(i.qty) }));
-    } catch (e) {
-      return [];
-    }
+    return loadList("kd-cart-v1", localStorage, (i) =>
+      productById(i.id) && Number(i.qty) > 0 ? { id: i.id, colorId: i.colorId, qty: Number(i.qty) } : null
+    );
   }
-
-  function saveCart() {
-    localStorage.setItem("kd-cart-v1", JSON.stringify(cart));
-  }
-
+  function saveCart() { saveList("kd-cart-v1", localStorage, cart); }
   function loadFavs() {
-    try {
-      const raw = JSON.parse(localStorage.getItem("kd-fav-v1") || "[]");
-      if (!Array.isArray(raw)) return [];
-      return raw.filter((i) => productById(i.id)).map((i) => ({ id: i.id, colorId: i.colorId }));
-    } catch (e) {
-      return [];
-    }
+    return loadList("kd-fav-v1", localStorage, (i) => (productById(i.id) ? { id: i.id, colorId: i.colorId } : null));
   }
-
-  function saveFavs() {
-    localStorage.setItem("kd-fav-v1", JSON.stringify(favs));
+  function saveFavs() { saveList("kd-fav-v1", localStorage, favs); }
+  function loadCompare() {
+    return loadList("kd-compare-v1", sessionStorage, (id) => (productById(id) ? id : null)).slice(0, 3);
   }
-
+  function saveCompare() { saveList("kd-compare-v1", sessionStorage, compare); }
   function findFav(id, colorId) {
     return favs.find((i) => i.id === id && i.colorId === colorId);
   }
-
   function loadOrders() {
     try {
       const all = JSON.parse(localStorage.getItem("kd-leads-v1") || "[]");
-      if (!Array.isArray(all)) return [];
-      return all.filter((item) => item && (item.kind === "order" || item.summary)).slice().reverse();
+      return Array.isArray(all) ? all.filter((item) => item && (item.kind === "order" || item.summary)).slice().reverse() : [];
     } catch (e) {
       return [];
     }
@@ -189,14 +222,76 @@
     }, 0);
   }
 
-  function rememberLead(lead) {
+  function storeLeadLocal(lead) {
     try {
       const all = JSON.parse(localStorage.getItem("kd-leads-v1") || "[]");
-      all.push(lead);
-      localStorage.setItem("kd-leads-v1", JSON.stringify(all));
+      if (!Array.isArray(all)) {
+        localStorage.setItem("kd-leads-v1", JSON.stringify([lead]));
+        return;
+      }
+      let found = false;
+      const next = all.map((row) => {
+        if (row && row.n === lead.n) {
+          found = true;
+          return lead;
+        }
+        return row;
+      });
+      if (!found) next.push(lead);
+      localStorage.setItem("kd-leads-v1", JSON.stringify(next));
     } catch (e) {
       /* хранилище может быть закрыто */
     }
+  }
+
+  function rememberLead(lead) {
+    storeLeadLocal(lead);
+    return fetch("/api/leads", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(lead),
+    })
+      .then(function (res) {
+        if (!res.ok) throw new Error("lead");
+        if (res.status === 204) return lead;
+        return res.json();
+      })
+      .then(function (saved) {
+        if (saved && saved.n) {
+          storeLeadLocal(saved);
+          return saved;
+        }
+        return lead;
+      })
+      .catch(function () {
+        return lead;
+      });
+  }
+
+  function orderMailOk(lead, status) {
+    const log = lead && Array.isArray(lead.mailLog) ? lead.mailLog : [];
+    return log.some((row) => row && row.status === status && row.ok);
+  }
+
+  function orderStagesHtml(current) {
+    const steps = [
+      { id: "Принят", label: t("orders.stageAccepted") },
+      { id: "Собран", label: t("orders.stageBuilt") },
+      { id: "Отгружен", label: t("orders.stageShipped") },
+    ];
+    const now = current || "Принят";
+    const index = steps.findIndex((step) => step.id === now);
+    if (index < 0) return "";
+    return (
+      '<ol class="order-stages">' +
+      steps
+        .map((step, i) => {
+          const state = i < index ? " is-done" : i === index ? " is-now" : "";
+          return "<li class=\"order-stage" + state + '">' + esc(step.label) + "</li>";
+        })
+        .join("") +
+      "</ol>"
+    );
   }
 
   function openMail(subject, body) {
@@ -626,50 +721,49 @@
     }
 
     function cloverOutline(L, W) {
-      const a = L * 0.28;
-      const b = W * 0.28;
-      return [
-        [-L / 2 + a, -W / 2],
-        [L / 2 - a, -W / 2],
-        [L / 2 - a, -W / 2 + b],
-        [L / 2, -W / 2 + b],
-        [L / 2, W / 2 - b],
-        [L / 2 - a, W / 2 - b],
-        [L / 2 - a, W / 2],
-        [-L / 2 + a, W / 2],
-        [-L / 2 + a, W / 2 - b],
-        [-L / 2, W / 2 - b],
-        [-L / 2, -W / 2 + b],
-        [-L / 2 + a, -W / 2 + b],
-      ];
+      const pts = [];
+      const n = 40;
+      for (let i = 0; i < n; i++) {
+        const t = (i / n) * Math.PI * 2;
+        const r = 0.38 + 0.62 * Math.abs(Math.cos(2 * t));
+        pts.push([(L / 2) * r * Math.cos(t), (W / 2) * r * Math.sin(t)]);
+      }
+      return pts;
     }
 
     function coilOutline(L, W) {
-      const neck = W * 0.34;
-      const shoulder = L * 0.22;
+      const neck = W * 0.26;
+      const head = L * 0.32;
       return [
         [-L / 2, -W / 2],
-        [-L / 2 + shoulder, -W / 2],
-        [-L / 2 + shoulder, -neck / 2],
-        [L / 2 - shoulder, -neck / 2],
-        [L / 2 - shoulder, -W / 2],
+        [-L / 2 + head, -W / 2],
+        [-L / 2 + head, -neck / 2],
+        [L / 2 - head, -neck / 2],
+        [L / 2 - head, -W / 2],
         [L / 2, -W / 2],
         [L / 2, W / 2],
-        [L / 2 - shoulder, W / 2],
-        [L / 2 - shoulder, neck / 2],
-        [-L / 2 + shoulder, neck / 2],
-        [-L / 2 + shoulder, W / 2],
+        [L / 2 - head, W / 2],
+        [L / 2 - head, neck / 2],
+        [-L / 2 + head, neck / 2],
+        [-L / 2 + head, W / 2],
         [-L / 2, W / 2],
       ];
     }
 
     if (product.shape === "old") {
-      const t = 33;
+      const t = 14;
+      const gap = 3;
+      const largeL = 118;
+      const row = 40;
+      const squareL = 77;
+      const smallL = largeL - squareL - gap;
+      const x0 = -largeL / 2;
+      const y0 = -(row * 2 + gap) / 2;
       const mix = color.id === "mix";
       boxes.push(
-        { x: -58, y: -28, z: 0, l: 62, w: 40, h: t, color: mix ? "#8d8d86" : hex },
-        { x: 8, y: -18, z: 0, l: 40, w: 40, h: t, color: mix ? "#6d4b34" : shade(hex, 0.92) },
-        { x: -22, y: 16, z: 0, l: 36, w: 22, h: t, color: mix ? "#a89880" : shade(hex, 1.05) }
+        { x: x0, y: y0, z: 0, l: largeL, w: row, h: t, color: mix ? "#8d8d86" : hex },
+        { x: x0, y: y0 + row + gap, z: 0, l: squareL, w: row, h: t, color: mix ? "#6d4b34" : shade(hex, 0.88) },
+        { x: x0 + squareL + gap, y: y0 + row + gap, z: 0, l: smallL, w: row, h: t, color: mix ? "#a89880" : shade(hex, 1.08) }
       );
       dims = { l: "", w: "", h: "60 мм", box: boxes[0] };
     } else if (!mm) {
@@ -733,12 +827,30 @@
             ? waveOutline(L, W)
             : product.shape === "clover"
               ? cloverOutline(L, W)
-              : product.shape === "coil"
-                ? coilOutline(L, W)
-                : null;
-        if (outline) prisms.push({ outline: outline, z: 0, h: H, color: hex });
-        else boxes.push(base);
-        dims = { l: mm.l + " мм", w: mm.w + " мм", h: mm.h + " мм", box: base };
+              : null;
+        if (product.shape === "coil") {
+          const sl = L * 0.7;
+          const sw = W * 0.36;
+          const sh = 14;
+          const gap = 10;
+          const spool = coilOutline(sl, sw);
+          const shiftX = sl * 0.5;
+          const shiftY = sw + gap;
+          const mx = shiftX / 2;
+          const my = shiftY / 2;
+          const move = (pts, dx, dy) => pts.map((p) => [p[0] + dx, p[1] + dy]);
+          prisms.push({ outline: move(spool, -mx, -my), z: 0, h: sh, color: hex });
+          prisms.push({ outline: move(spool, shiftX - mx, shiftY - my), z: 0, h: sh, color: shade(hex, 0.84) });
+          dims = { l: "", w: "", h: mm.h + " мм", box: { x: -mx - 6, y: -my + sw * 0.15, z: 0, l: 12, w: 10, h: sh } };
+        } else if (outline) {
+          const sh = product.shape === "clover" ? Math.min(H, 18) : H;
+          prisms.push({ outline: outline, z: 0, h: sh, color: hex });
+          dims =
+            product.shape === "clover"
+              ? { l: "", w: "", h: mm.h + " мм", box: { x: -8, y: W * 0.12, z: 0, l: 16, w: 12, h: sh } }
+              : { l: mm.l + " мм", w: mm.w + " мм", h: mm.h + " мм", box: base };
+        } else boxes.push(base);
+        if (!outline && product.shape !== "coil") dims = { l: mm.l + " мм", w: mm.w + " мм", h: mm.h + " мм", box: base };
         if (product.shape === "hollow" || product.shape === "eco") {
           const gapX = L * 0.12;
           const gapY = W * 0.22;
@@ -972,8 +1084,9 @@
     host.addEventListener("dragstart", (e) => e.preventDefault());
     if (host._modelYaw == null) host._modelYaw = Math.PI / 4;
     let drag = null;
+    let redrawFrame = 0;
 
-    function redraw() {
+    function redrawNow() {
       const svg = host.querySelector(".model");
       if (!svg) return;
       const product = productById(svg.getAttribute("data-model"));
@@ -981,6 +1094,14 @@
       const holder = document.createElement("div");
       holder.innerHTML = viz(product, svg.getAttribute("data-color"), host._modelYaw);
       if (holder.firstChild) svg.replaceWith(holder.firstChild);
+    }
+
+    function redraw() {
+      if (redrawFrame) return;
+      redrawFrame = requestAnimationFrame(() => {
+        redrawFrame = 0;
+        redrawNow();
+      });
     }
 
     host._turnModel = function (delta) {
@@ -1036,12 +1157,36 @@
     );
   }
 
-  function viewSwitch() {
+  function viewSwitch(photoFirst) {
+    if (photoFirst) {
+      return (
+        '<div class="view-switch" role="group" aria-label="' + esc(t("product.view")) + '">' +
+        '<button type="button" class="view-btn is-on" data-action="set-view" data-view="photo" aria-pressed="true">' + esc(t("product.photo")) + "</button>" +
+        '<button type="button" class="view-btn" data-action="set-view" data-view="model" aria-pressed="false">' + esc(t("product.model")) + "</button>" +
+        "</div>"
+      );
+    }
     return (
       '<div class="view-switch" role="group" aria-label="' + esc(t("product.view")) + '">' +
       '<button type="button" class="view-btn is-on" data-action="set-view" data-view="model" aria-pressed="true">' + esc(t("product.model")) + "</button>" +
       '<button type="button" class="view-btn" data-action="set-view" data-view="photo" aria-pressed="false">' + esc(t("product.photo")) + "</button>" +
       "</div>"
+    );
+  }
+
+  function photoHtml(product, colorId) {
+    const color = colorObj(product, colorId || product.colors[0].id);
+    const wash = colorNeedsWash(color.hex)
+      ? '<span class="photo-wash" style="background:' + safeHex(color.hex) + '"></span>'
+      : "";
+    return (
+      '<span class="photo-stack"><img class="photo" draggable="false" width="1152" height="864" loading="lazy" decoding="async" alt="' +
+      esc(product.name) +
+      '" src="' +
+      esc(window.KDAdmin && KDAdmin.photoSrc ? KDAdmin.photoSrc(product.id) : "img/" + product.id + ".jpg") +
+      '">' +
+      wash +
+      "</span>"
     );
   }
 
@@ -1051,12 +1196,7 @@
     const color = media.dataset.color || product.colors[0].id;
     const badge = media.querySelector(".badge");
     if (media.dataset.view === "photo") {
-      media.innerHTML =
-        '<img class="photo" draggable="false" alt="' +
-        esc(product.name) +
-        ', ' + esc(t("product.texture")) + '" src="' +
-        esc(window.KDAdmin && KDAdmin.photoSrc ? KDAdmin.photoSrc(product.id) : "img/" + product.id + ".jpg") +
-        '"><span class="photo-note">' + esc(t("product.texture")) + "</span>";
+      media.innerHTML = photoHtml(product, color);
     } else {
       media.innerHTML = viz(product, color, media._modelYaw);
     }
@@ -1356,9 +1496,11 @@
     let drag = null;
     let playing = false;
     let raf = 0;
+    let dragRaf = 0;
     host._yardStop = () => {
       playing = false;
       cancelAnimationFrame(raf);
+      cancelAnimationFrame(dragRaf);
     };
     const started = { t: 0 };
     const intro = model.intro;
@@ -1459,6 +1601,14 @@
       svg.innerHTML = '<g transform="translate(' + v.x + "," + v.y + ") scale(" + v.s + ')">' + body + "</g>";
     }
 
+    function scheduleDragDraw() {
+      if (dragRaf) return;
+      dragRaf = requestAnimationFrame(() => {
+        dragRaf = 0;
+        if (svg.isConnected) draw(laidBoxes());
+      });
+    }
+
     function finishLay() {
       if (!playing) return;
       playing = false;
@@ -1510,7 +1660,7 @@
       }
       if (drag.mode !== "spin") return;
       yaw = drag.yaw + dx * 0.012;
-      draw(laidBoxes());
+      scheduleDragDraw();
     });
     svg.addEventListener("pointerup", stopDrag);
     svg.addEventListener("pointercancel", stopDrag);
@@ -1533,6 +1683,29 @@
     if (p.category === "block") return formatMoney(p.price * p.pcsPerM2) + t("product.perWall");
     if (p.category === "border") return formatMoney(p.price) + t("product.perMeter");
     return "";
+  }
+
+  function offerQty(p) {
+    if (p && p.category === "block" && p.pcsPerM2) return p.pcsPerM2;
+    return 1;
+  }
+
+  function offerPrice(p) {
+    if (p && p.category === "block" && p.pcsPerM2) return p.price * p.pcsPerM2;
+    return p ? p.price : 0;
+  }
+
+  function offerLabel(p) {
+    if (!p) return "";
+    if (p.unit === "м²") return "за 1 м²";
+    if (p.category === "block") return "за 1 м² стены";
+    if (p.unit === "м³") return "за 1 м³";
+    return "за 1 шт";
+  }
+
+  function cardExtra(p) {
+    if (p.category === "block") return formatMoney(p.price) + "/шт";
+    return secondaryPrice(p);
   }
 
   function cardKicker(p) {
@@ -1568,8 +1741,25 @@
       .join("");
   }
 
-  function favButton(product, colorId) {
+  function favButton(product, colorId, icon) {
     const on = !!findFav(product.id, colorId);
+    if (icon) {
+      return (
+        '<button type="button" class="card-fav' +
+        (on ? " is-on" : "") +
+        '" data-action="fav" data-id="' +
+        product.id +
+        '" data-color="' +
+        colorId +
+        '" aria-label="' +
+        esc(on ? t("product.favOn") : t("product.fav")) +
+        '" aria-pressed="' +
+        on +
+        '">' +
+        (on ? "♥" : "♡") +
+        "</button>"
+      );
+    }
     return (
       '<button type="button" class="btn btn-line paper-line' +
       (on ? " is-on" : "") +
@@ -1584,35 +1774,99 @@
       "</button>"
     );
   }
+  function favIconButton(product, colorId) { return favButton(product, colorId, true); }
 
   function paintFav(btn) {
     const on = !!findFav(btn.dataset.id, btn.dataset.color);
     btn.classList.toggle("is-on", on);
     btn.setAttribute("aria-pressed", String(on));
-    btn.textContent = on ? t("product.favOn") : t("product.fav");
+    if (btn.classList.contains("card-fav")) {
+      btn.textContent = on ? "♥" : "♡";
+      btn.setAttribute("aria-label", on ? t("product.favOn") : t("product.fav"));
+    } else {
+      btn.textContent = on ? t("product.favOn") : t("product.fav");
+    }
   }
 
-  function cardHtml(p) {
+  function compareMark(id) {
+    const on = compare.indexOf(id) !== -1;
+    return (
+      '<button type="button" class="card-compare' +
+      (on ? " is-on" : "") +
+      '" data-action="compare" data-id="' +
+      id +
+      '">' +
+      (on ? "В сравнении" : "Сравнить") +
+      "</button>"
+    );
+  }
+
+  function yardKit(product, colorId) {
+    if (!product || product.category !== "tile") return null;
+    const border = borderForTile(product);
+    if (!border) return null;
+    const est = buildEstimate({
+      project: "yard",
+      productId: product.id,
+      colorId: colorId || product.colors[0].id,
+      reserve: 5,
+      borderId: border.id,
+      withBase: true,
+      delivery: "city",
+      yardLength: 8,
+      yardWidth: 5,
+      pattern: "straight",
+    });
+    if (!est || est.empty) return null;
+    return { area: 40, goods: est.goods };
+  }
+
+  function yardPriceHtml(p, colorId) {
+    const kit = yardKit(p, colorId);
+    if (!kit) return "";
+    return (
+      '<a class="yard-price" href="#/calc" data-action="open-calc" data-kit="yard" data-id="' +
+      p.id +
+      '" data-color="' +
+      colorId +
+      '" title="Плитка, бордюр, песок и щебень. Доставка отдельно.">Двор ' +
+      kit.area +
+      ' м² <b>' +
+      formatMoney(kit.goods) +
+      "</b></a>"
+    );
+  }
+
+  function cardHtml(p, photoFirst) {
     const color = p.colors[0];
-    const second = secondaryPrice(p);
+    const second = cardExtra(p);
     const wait = p.stock !== "В наличии";
+    const media = photoFirst ? photoHtml(p, color.id) : viz(p, color.id);
     return (
       '<article class="card" data-color-scope>' +
-      '<div class="media-frame"><a class="card-media" draggable="false" href="#/product/' +
+      '<div class="media-frame' + (photoFirst ? " is-photo" : "") + '"><a class="card-media" draggable="false" href="#/product/' +
       p.id +
       '" data-media data-id="' +
       p.id +
       '" data-color="' +
       color.id +
-      '" data-view="model">' +
-      viz(p, color.id) +
+      '" data-view="' +
+      (photoFirst ? "photo" : "model") +
+      '">' +
+      media +
       '<span class="badge' +
       (wait ? " badge-wait" : "") +
       '">' +
       esc(p.stock) +
       "</span></a>" +
+      favIconButton(p, color.id) +
+      '<button type="button" class="btn card-quick" data-action="buy" data-id="' +
+      p.id +
+      '" data-color="' +
+      color.id +
+      '">Купить</button>' +
       spinButtons() +
-      viewSwitch() +
+      viewSwitch(photoFirst) +
       "</div>" +
       '<div class="card-body">' +
       '<p class="kicker-line">' +
@@ -1623,28 +1877,30 @@
       '">' +
       esc(p.name) +
       "</a></h3>" +
-      '<p class="meta">' +
+      '<p class="meta"><span>' +
       esc(p.size) +
       " · " +
       esc(p.frost) +
-      "</p>" +
-      '<div class="dots">' +
+      '</span><span class="dots">' +
       dotsHtml(p) +
-      "</div>" +
+      "</span></p>" +
       '<div class="price-row"><strong>' +
-      formatMoney(p.price) +
-      "<small>/" +
-      esc(p.unit) +
+      formatMoney(offerPrice(p)) +
+      "<small> " +
+      esc(offerLabel(p)) +
       "</small></strong><span>" +
       esc(second) +
       "</span></div>" +
+      yardPriceHtml(p, color.id) +
+      '<div class="card-actions">' +
+      compareMark(p.id) +
       '<button type="button" class="btn" data-action="add" data-id="' +
       p.id +
+      '" data-qty="' +
+      offerQty(p) +
       '" data-color="' +
       color.id +
-      '">' + esc(t("product.cart")) + "</button>" +
-      favButton(p, color.id) +
-      "</div></article>"
+      '">' + esc(t("product.cart")) + "</button></div></div></article>"
     );
   }
 
@@ -1670,9 +1926,6 @@
 
   function renderHome() {
     const hit = productById("stary-gorod");
-    const tileFrom = formatMoney(minPrice("tile"));
-    const blockFrom = formatMoney(minPrice("block"));
-    const borderFrom = formatMoney(minPrice("border"));
     const plita = productById("plita-400");
     const hollow = productById("block-hollow");
     const solid = productById("block-solid");
@@ -1688,7 +1941,7 @@
     const picks = ["kirpich-60", "stary-gorod", "block-hollow", "border-road"]
       .map((id) => productById(id))
       .filter((p) => p && !p.hidden)
-      .map((p) => cardHtml(p))
+      .map((p) => cardHtml(p, true))
       .join("");
     const offers = [
       { product: plita, why: t("home.deal1") || ("На " + formatMoney(hit.price - plita.price) + " за м² дешевле «Старого города»") },
@@ -1696,50 +1949,207 @@
       { product: garden, why: t("home.deal3") || ("На " + formatMoney(road.price - garden.price) + " за метр дешевле дорожного") },
       { product: sand, why: t("home.deal4") },
     ];
-    function promoSide(product) {
+    function shockOffer(parts) {
+      if (!plita || !hit || plita.hidden || hit.hidden) return "";
+      const gap = hit.price - plita.price;
+      const priceNum = formatMoney(plita.price).replace(/\s*₽$/, "");
       return (
-        '<a class="promo-side" href="#/product/' +
-        product.id +
-        '" aria-label="' +
-        esc(product.name) +
+        '<div class="promo promo-shock">' +
+        '<div class="shock-copy"><p class="shock-badge">' +
+        parts.badge +
+        '</p><h2 class="shock-price">' +
+        esc(priceNum) +
+        "<small> ₽/" +
+        esc(plita.unit) +
+        "</small></h2><p class=\"shock-line\">" +
+        parts.line +
+        '</p><p class="shock-size">' +
+        esc(plita.size) +
+        '</p><a class="btn promo-btn" href="#/product/' +
+        plita.id +
         '">' +
-        viz(product, product.colors[0].id) +
-        "</a>"
+        parts.btn +
+        "</a></div>" +
+        '<div class="shock-vs"><a class="shock-card shock-old" href="#/product/' +
+        hit.id +
+        '">' +
+        '<img width="1152" height="864" loading="eager" decoding="async" src="' +
+        esc(shotSrc(hit)) +
+        '" alt="">' +
+        '<span class="shock-name">' +
+        esc(hit.name) +
+        '</span><span class="shock-old-price">' +
+        esc(formatMoney(hit.price)) +
+        "/" +
+        esc(hit.unit) +
+        '</span></a><a class="shock-card shock-now" href="#/product/' +
+        plita.id +
+        '">' +
+        '<img width="1152" height="864" loading="eager" decoding="async" fetchpriority="high" src="' +
+        esc(shotSrc(plita)) +
+        '" alt="">' +
+        '<span class="shock-name">' +
+        esc(plita.name) +
+        "</span>" +
+        (gap > 0 ? '<span class="shock-save">' + parts.save + "</span>" : "") +
+        '</a><p class="shock-fine">' +
+        parts.fine +
+        "</p></div></div>"
       );
     }
+    function shotSrc(product) {
+      return window.KDAdmin && KDAdmin.photoSrc ? KDAdmin.photoSrc(product.id) : "img/" + product.id + ".jpg";
+    }
+    function htmlText(value, map) {
+      let s = esc(value || "");
+      Object.keys(map || {}).forEach((name) => {
+        s = s.split("{" + name + "}").join(esc(map[name] == null ? "" : map[name]));
+      });
+      return s.replace(/\n/g, "<br>");
+    }
+    function bannerImage(slide, product) {
+      if (window.KDAdmin && KDAdmin.bannerSrc) return KDAdmin.bannerSrc(slide.id, product.id);
+      return shotSrc(product);
+    }
+    function offerSlide(slide) {
+      const gap = hit && plita ? hit.price - plita.price : 0;
+      return shockOffer({
+        badge: htmlText(slide.kicker),
+        line: htmlText(slide.title),
+        btn: htmlText(slide.btn),
+        save: htmlText(slide.note, { gap: formatMoney(gap) }),
+        fine: htmlText(slide.text),
+      });
+    }
+    function photoSlide(slide, eager) {
+      const product = productById(slide.productId);
+      if (!product || product.hidden) return "";
+      const tone = product.category === "block" ? " promo-shot-block" : " promo-shot-tile";
+      const standardButtons = ["Открыть плиту", "Открыть блок", "Купить плитку", "Купить шлакоблок"];
+      const button = standardButtons.includes(slide.btn) ? "Купить" : slide.btn || "Купить";
+      return (
+        '<a class="promo promo-shot' + tone + '" href="#/product/' +
+        product.id +
+        '"><img width="1152" height="864" loading="' +
+        (eager ? "eager" : "lazy") +
+        '" decoding="async"' +
+        (eager ? ' fetchpriority="high"' : "") +
+        ' src="' +
+        esc(bannerImage(slide, product)) +
+        '" alt="' +
+        esc(product.name) +
+        '"><div class="promo-copy"><p class="promo-kicker">' +
+        htmlText(slide.kicker) +
+        "</p><h2>" +
+        htmlText(slide.title || product.name) +
+        "</h2><p>" +
+        htmlText(slide.text, { price: formatMoney(product.price), size: product.size }) +
+        '</p><span class="btn promo-btn">' +
+        htmlText(button) +
+        "</span></div></a>"
+      );
+    }
+    function promoShot(product, keys, eager) {
+      if (!product || product.hidden) return "";
+      const tone = product.category === "block" ? " promo-shot-block" : " promo-shot-tile";
+      return (
+        '<a class="promo promo-shot' + tone + '" href="#/product/' +
+        product.id +
+        '"><img width="1152" height="864" loading="' +
+        (eager ? "eager" : "lazy") +
+        '" decoding="async"' +
+        (eager ? ' fetchpriority="high"' : "") +
+        ' src="' +
+        esc(shotSrc(product)) +
+        '" alt="' +
+        esc(product.name) +
+        '"><div class="promo-copy"><p class="promo-kicker">' +
+        esc(t(keys.kicker)) +
+        "</p><h2>" +
+        lines(keys.title) +
+        "</h2><p>" +
+        fill(keys.text, { price: formatMoney(product.price), size: product.size }) +
+        '</p><span class="btn promo-btn">' +
+        esc(t(keys.btn)) +
+        "</span></div></a>"
+      );
+    }
+    const customSlides = window.KDBanner && Array.isArray(window.KDBanner.slides) ? window.KDBanner.slides : null;
+    const slides = (customSlides
+      ? customSlides
+          .filter((slide) => slide && slide.on !== false)
+          .map((slide, index) => (slide.type === "offer" ? offerSlide(slide) : photoSlide(slide, index === 0)))
+      : [
+          shockOffer({
+            badge: esc(t("home.promoKicker")),
+            line: lines("home.promoTitle"),
+            btn: esc(t("home.promoBtn")),
+            save: fill("home.promoNote", { gap: formatMoney(hit.price - plita.price) }),
+            fine: fill("home.promoText"),
+          }),
+          promoShot(plita, { kicker: "home.slide2Kicker", title: "home.slide2Title", text: "home.slide2Text", btn: "home.slide2Btn" }, false),
+          promoShot(hollow, { kicker: "home.slide3Kicker", title: "home.slide3Title", text: "home.slide3Text", btn: "home.slide3Btn" }, false),
+        ]
+    ).filter(Boolean);
+    const many = slides.length > 1;
     const promo =
-      '<div class="promo">' +
-      promoSide(plita) +
-      '<div class="promo-copy"><p class="promo-kicker">' + esc(t("home.promoKicker")) + "</p><h2>" + lines("home.promoTitle") + "</h2><p>" +
-      fill("home.promoText", { tile: tileFrom, block: blockFrom, border: borderFrom }) +
-      '</p><a class="btn promo-btn" href="#/catalog">' + esc(t("home.promoBtn")) + "</a></div>" +
-      promoSide(hollow) +
-      '<span class="promo-note">' + esc(t("home.promoNote")) + "</span></div>";
+      '<div class="promo-stage" data-promo>' +
+      '<div class="promo-viewport"><div class="promo-track">' +
+      slides.join("") +
+      "</div>" +
+      (many
+        ? '<button type="button" class="promo-arrow" data-promo-dir="-1" aria-label="' +
+          esc(t("home.promoPrev")) +
+          '">‹</button><button type="button" class="promo-arrow promo-arrow-next" data-promo-dir="1" aria-label="' +
+          esc(t("home.promoNext")) +
+          '">›</button>'
+        : "") +
+      "</div>" +
+      (many
+        ? '<div class="promo-dots" role="tablist" aria-label="' +
+          esc(t("home.promoDots")) +
+          '">' +
+          slides
+            .map(
+              (_, i) =>
+                '<button type="button" class="promo-dot' +
+                (i === 0 ? " is-on" : "") +
+                '" role="tab" data-promo-go="' +
+                i +
+                '" aria-label="' +
+                esc(t("home.promoDot")) +
+                " " +
+                (i + 1) +
+                '" aria-selected="' +
+                (i === 0 ? "true" : "false") +
+                '"></button>'
+            )
+            .join("") +
+          "</div>"
+        : "") +
+      "</div>";
     const dealCards = offers
       .map((offer) => {
         const p = offer.product;
         if (!p || p.hidden) return "";
-        const c = p.colors[0];
         return (
           '<article class="deal"><a class="deal-viz" href="#/product/' +
           p.id +
-          '">' +
-          viz(p, c.id) +
-          '</a><p class="deal-why">' +
+          '"><img width="1152" height="864" loading="lazy" decoding="async" src="' +
+          esc(shotSrc(p)) +
+          '" alt="' +
+          esc(p.name) +
+          '"></a><p class="deal-why">' +
           esc(offer.why) +
           '</p><h3><a href="#/product/' +
           p.id +
           '">' +
           esc(p.name) +
           "</a></h3><strong>" +
-          formatMoney(p.price) +
-          "/" +
-          esc(p.unit) +
-          '</strong><button type="button" class="btn" data-action="add" data-id="' +
-          p.id +
-          '" data-color="' +
-          c.id +
-          '">' + esc(t("home.dealCart")) + "</button></article>"
+          formatMoney(offerPrice(p)) +
+          " " +
+          esc(offerLabel(p)) +
+          "</strong></article>"
         );
       })
       .join("");
@@ -1770,14 +2180,12 @@
       '<p class="eyebrow">' + esc(t("home.eyebrow")) + "</p>" +
       "<h1>" + lines("home.h1") + "</h1>" +
       '<p class="lede">' + lines("home.lede") + "</p>" +
-      '<div class="hero-actions"><a class="btn" href="#/catalog">' + esc(t("home.btnCatalog")) + '</a><a class="btn btn-line" href="#/calc">' + esc(t("home.btnCalc")) + "</a></div>" +
-      '<div class="stats"><div class="stat"><strong>' + fill("home.statTile", { tile: tileFrom }) + "</strong><span>" + esc(t("home.statTileNote")) + "</span></div>" +
+      '<div class="hero-actions"><a class="btn" href="#/calc">' + esc(t("home.btnCatalog")) + '</a><a class="btn btn-line" href="#/delivery">' + esc(t("home.btnCalc")) + "</a></div>" +
+      '<div class="stats"><div class="stat"><strong>' + esc(t("home.statTile")) + "</strong><span>" + esc(t("home.statTileNote")) + "</span></div>" +
       '<div class="stat"><strong>' + esc(t("home.statFrost")) + "</strong><span>" + esc(t("home.statFrostNote")) + "</span></div>" +
-      '<div class="stat"><strong>' +
-      PRODUCTS.length +
-      "</strong><span>" +
-      plural(PRODUCTS.length, "позиция", "позиции", "позиций") +
-      " " + esc(t("home.statCountNote")) + "</span></div></div></div></div></section>" +
+      '<div class="stat"><strong>1 клик</strong><span>' +
+      esc(t("home.statCountNote")) +
+      "</span></div></div></div></div></section>" +
       '<div class="wrap">' +
       cats +
       '<div class="section-h"><h2>' + esc(t("home.stockTitle")) + '</h2><a href="#/catalog">' + esc(t("home.dealsAll")) + "</a></div></div>" +
@@ -1839,22 +2247,56 @@
     );
   }
 
-  function colorOptions() {
+  function catalogColors() {
     const map = new Map();
-    PRODUCTS.forEach((p) => p.colors.forEach((c) => map.set(c.id, c.name)));
+    PRODUCTS.forEach((p) => p.colors.forEach((c) => map.set(c.id, { id: c.id, label: c.name, color: c.hex })));
+    return [{ id: "all", label: t("catalog.anyColor"), color: "" }].concat(Array.from(map.values()));
+  }
+
+  function filterMenuHtml(kind, title, value, options) {
+    const current = options.find((option) => option.id === value) || options[0];
     return (
-      '<option value="all">' + esc(t("catalog.anyColor")) + "</option>" +
-      Array.from(map.entries())
-        .map(([id, name]) => '<option value="' + id + '"' + (state.color === id ? " selected" : "") + ">" + esc(name) + "</option>")
+      '<details class="filter-menu" data-filter-menu="' +
+      kind +
+      '"><summary><span>' +
+      esc(title) +
+      '</span><strong data-filter-current>' +
+      esc(current.label) +
+      '</strong><i aria-hidden="true"></i></summary><div class="filter-options" role="listbox">' +
+      options
+        .map(
+          (option) =>
+            '<button type="button" role="option" class="' +
+            (option.id === value ? "is-on" : "") +
+            '" data-action="set-filter" data-filter="' +
+            kind +
+            '" data-value="' +
+            option.id +
+            '" data-label="' +
+            esc(option.label) +
+            '" aria-selected="' +
+            (option.id === value) +
+            '">' +
+            (kind === "color"
+              ? '<span class="filter-swatch' +
+                (option.id === "all" ? " is-all" : "") +
+                '"' +
+                (option.color ? ' style="background:' + safeHex(option.color) + '"' : "") +
+                "></span>"
+              : "") +
+            "<span>" +
+            esc(option.label) +
+            "</span><b aria-hidden=\"true\">✓</b></button>"
+        )
         .join("")
+      + "</div></details>"
     );
   }
 
   function renderCatalog() {
     return (
       '<section class="page"><div class="wrap">' +
-      pageHead(t("catalog.title"), t("catalog.lede")) +
-      '<p class="legend"><span><b>50 мм</b> ' + esc(t("catalog.legend50")) + "</span><span><b>60 мм</b> " + esc(t("catalog.legend60")) + "</span><span><b>80 мм</b> " + esc(t("catalog.legend80")) + "</span></p>" +
+      pageHead(t("catalog.title")) +
       '<div class="toolbar"><div class="chips">' +
       CATS.map((c) => {
         const on = state.cat === c.id;
@@ -1871,24 +2313,18 @@
         );
       }).join("") +
       '</div><div class="toolbar-tools">' +
-      '<select id="f-color" aria-label="' + esc(t("catalog.colorLabel")) + '">' +
-      colorOptions() +
-      "</select>" +
-      '<select id="f-thick" aria-label="' + esc(t("catalog.thickLabel")) + '">' +
-      ["all", "50", "60", "80"]
-        .map((v) => '<option value="' + v + '"' + (state.thick === v ? " selected" : "") + ">" + (v === "all" ? esc(t("catalog.anyThick")) : v + " мм") + "</option>")
-        .join("") +
-      "</select>" +
-      '<select id="f-sort" aria-label="' + esc(t("catalog.sortLabel")) + '">' +
-      '<option value="pop"' +
-      (state.sort === "pop" ? " selected" : "") +
-      ">" + esc(t("catalog.sortPop")) + "</option>" +
-      '<option value="cheap"' +
-      (state.sort === "cheap" ? " selected" : "") +
-      ">" + esc(t("catalog.sortCheap")) + "</option>" +
-      '<option value="dear"' +
-      (state.sort === "dear" ? " selected" : "") +
-      ">" + esc(t("catalog.sortDear")) + "</option></select>" +
+      filterMenuHtml("color", t("catalog.colorLabel"), state.color, catalogColors()) +
+      filterMenuHtml(
+        "thick",
+        t("catalog.thickLabel"),
+        state.thick,
+        ["all", "50", "60", "80"].map((id) => ({ id, label: id === "all" ? t("catalog.anyThick") : id + " мм" }))
+      ) +
+      filterMenuHtml("sort", t("catalog.sortLabel"), state.sort, [
+        { id: "pop", label: t("catalog.sortPop") },
+        { id: "cheap", label: t("catalog.sortCheap") },
+        { id: "dear", label: t("catalog.sortDear") },
+      ]) +
       '<input id="q" type="search" placeholder="' + esc(t("catalog.search")) + '" aria-label="' + esc(t("catalog.search")) + '" value="' +
       esc(state.q) +
       '">' +
@@ -1927,9 +2363,40 @@
       count.textContent = list.length + " " + plural(list.length, "позиция", "позиции", "позиций");
     }
     grid.innerHTML = list.length
-      ? list.map(cardHtml).join("")
+      ? list.map((p) => cardHtml(p, true)).join("")
       : '<div class="empty"><p>' + esc(t("catalog.empty")) + '</p><button type="button" class="btn btn-ink" data-action="reset-filters">' + esc(t("catalog.reset")) + "</button></div>";
     bindModelSpins(grid);
+  }
+
+  function paintFilterMenu(kind, value) {
+    const menu = document.querySelector('[data-filter-menu="' + kind + '"]');
+    if (!menu) return;
+    const options = [...menu.querySelectorAll("[data-action=set-filter]")];
+    const active = options.find((option) => option.dataset.value === String(value)) || options[0];
+    options.forEach((option) => {
+      const on = option === active;
+      option.classList.toggle("is-on", on);
+      option.setAttribute("aria-selected", String(on));
+    });
+    const current = menu.querySelector("[data-filter-current]");
+    if (current && active) current.textContent = active.dataset.label;
+  }
+
+  function animateCatalogFilter() {
+    const toolbar = document.querySelector(".toolbar");
+    const grid = document.getElementById("grid");
+    if (toolbar) {
+      toolbar.classList.remove("is-filtering");
+      void toolbar.offsetWidth;
+      toolbar.classList.add("is-filtering");
+      setTimeout(() => toolbar.classList.remove("is-filtering"), 420);
+    }
+    if (grid) {
+      grid.classList.remove("is-refreshing");
+      void grid.offsetWidth;
+      grid.classList.add("is-refreshing");
+      setTimeout(() => grid.classList.remove("is-refreshing"), 320);
+    }
   }
 
   function renderProduct(id) {
@@ -1948,15 +2415,15 @@
       "</a> · " +
       esc(p.name) +
       "</p>" +
-      '<div class="product" data-color-scope><div class="media-frame"><div class="product-media" data-media data-id="' +
+      '<div class="product" data-color-scope><div class="media-frame is-photo"><div class="product-media" data-media data-id="' +
       p.id +
       '" data-color="' +
       color.id +
-      '" data-view="model">' +
-      viz(p, color.id) +
+      '" data-view="photo">' +
+      photoHtml(p, color.id) +
       "</div>" +
       spinButtons() +
-      viewSwitch() +
+      viewSwitch(true) +
       '</div><div class="product-panel">' +
       '<p class="eyebrow">' +
       esc(cardKicker(p)) +
@@ -1968,26 +2435,35 @@
       esc(p.lead) +
       "</p>" +
       '<p class="product-sum" id="product-sum">' +
-      formatMoney(p.price * p.defaultQty) +
-      "</p>" +
-      '<div class="dots" style="margin-bottom:12px">' +
+      formatMoney(offerPrice(p)) +
+      "<small> " +
+      esc(offerLabel(p)) +
+      "</small></p>" +
+      '<div class="swatches"><div class="dots">' +
       dotsHtml(p) +
-      "</div>" +
-      '<div class="qty-row"><label class="field" style="margin:0"><span>' + esc(t("product.qty")) + ", " +
-      esc(p.unit) +
-      '</span><input id="qty" type="number" min="' +
-      p.step +
-      '" step="' +
-      p.step +
-      '" value="' +
-      p.defaultQty +
-      '"></label>' +
-      '<button type="button" class="btn" data-action="add-qty" data-id="' +
+      '</div><span class="color-name" id="color-name">' +
+      esc(color.name) +
+      "</span></div>" +
+      '<p class="assure">' +
+      esc(p.stock === "В наличии" ? "В наличии · отгрузка в день оплаты" : p.stock) +
+      "</p>" +
+      '<div class="qty-row"><button type="button" class="btn" data-action="add-qty" data-id="' +
       p.id +
       '" data-color="' +
       color.id +
       '">' + esc(t("product.cart")) + "</button>" +
-      favButton(p, color.id) +
+      '<button type="button" class="btn btn-line paper-line" data-action="buy" data-id="' +
+      p.id +
+      '" data-color="' +
+      color.id +
+      '">Купить</button>' +
+      "</div>" +
+      '<div class="product-actions"><button type="button" class="btn btn-line paper-line" data-action="sample" data-id="' +
+      p.id +
+      '" data-color="' +
+      color.id +
+      '">Привезти образцы</button>' +
+      compareMark(p.id) +
       "</div>" +
       "<table class=\"specs\"><tbody>" +
       row(t("product.rowSize"), p.size) +
@@ -1998,10 +2474,24 @@
       row(t("product.rowPcs"), p.piecesLabel) +
       row(t("product.rowPallet"), p.pallet) +
       row(t("product.rowUse"), p.usage) +
-      "</tbody></table></div></div>" +
+      "</tbody></table></div>" +
+      '<div class="buy-bar" id="buy-bar" hidden><div class="wrap buy-bar-inner"><div><strong>' +
+      esc(p.name) +
+      '</strong><span class="buy-bar-meta" id="buy-bar-meta">' +
+      esc(color.name) +
+      " · " +
+      formatMoney(offerPrice(p)) +
+      " " +
+      esc(offerLabel(p)) +
+      '</span></div><button type="button" class="btn" data-action="buy" data-id="' +
+      p.id +
+      '" data-color="' +
+      color.id +
+      '">Купить</button></div></div></div>' +
+      productLayHtml(p) +
       withThisHtml(p) +
       (related.length
-        ? '<div class="section-h"><h2>' + esc(t("product.related")) + "</h2></div><div class=\"grid\">" + related.map(cardHtml).join("") + "</div>"
+        ? '<div class="section-h"><h2>' + esc(t("product.related")) + "</h2></div><div class=\"grid\">" + related.map((item) => cardHtml(item, true)).join("") + "</div>"
         : "") +
       "</div></section>"
     );
@@ -2053,8 +2543,11 @@
           return (
             '<article class="with-item"><a class="with-viz" href="#/product/' +
             item.product.id +
+            '"><img width="1152" height="864" loading="lazy" decoding="async" src="' +
+            esc(window.KDAdmin && KDAdmin.photoSrc ? KDAdmin.photoSrc(item.product.id) : "img/" + item.product.id + ".jpg") +
+            '" alt="' +
+            esc(item.product.name) +
             '">' +
-            viz(item.product, c.id) +
             '</a><div><h3><a href="#/product/' +
             item.product.id +
             '">' +
@@ -2090,10 +2583,26 @@
     return Math.round(raw * 10) / 10;
   }
 
+  function projectAmount(calc) {
+    if (calc.project === "yard") {
+      return Number(calc.yardLength) * Number(calc.yardWidth);
+    }
+    if (calc.project === "house") {
+      const perimeter = 2 * (Number(calc.houseLength) + Number(calc.houseWidth));
+      return Math.max(0, perimeter * Number(calc.houseHeight) - Number(calc.houseOpenings || 0));
+    }
+    return Number(calc.amount);
+  }
+
+  function projectBorderMeters(calc) {
+    if (calc.project === "yard") return 2 * (Number(calc.yardLength) + Number(calc.yardWidth));
+    return Number(calc.borderMeters);
+  }
+
   function buildEstimate(calc) {
     const p = productById(calc.productId);
     if (!p) return null;
-    const amount = Number(calc.amount);
+    const amount = projectAmount(calc);
     if (!isFinite(amount) || amount <= 0 || amount > 100000) return { empty: true, product: p };
     const qty = convertQty(p, amount, calc.reserve);
     const color = colorObj(p, calc.colorId);
@@ -2107,9 +2616,10 @@
       sum: Math.round(qty * p.price),
       cart: { id: p.id, colorId: color.id, qty: qty },
     });
-    if (p.category === "tile" && Number(calc.borderMeters) > 0) {
+    const borderMeters = projectBorderMeters(calc);
+    if (p.category === "tile" && borderMeters > 0) {
       const b = productById(calc.borderId);
-      const bqty = Math.ceil(Number(calc.borderMeters));
+      const bqty = Math.ceil(borderMeters);
       lines.push({
         title: b.name,
         detail: bqty + " п.м",
@@ -2147,6 +2657,9 @@
     let note = "";
     if (p.category === "tile" && qty < 10) note = t("calc.noteTile");
     if (p.category === "block" && qty < 50) note = t("calc.noteBlock");
+    if (calc.project === "house") {
+      note = "Упрощённый расчёт наружных стен. Раствор, армирование, фронтоны и внутренние перегородки не включены.";
+    }
     return { lines, goods, delivery, total: goods + delivery.price, product: p, note };
   }
 
@@ -2155,6 +2668,121 @@
     if (p.category === "tile") return base + " · " + Math.ceil(qty * p.pcsPerM2) + " шт";
     if (p.category === "block") return base + " · " + formatQty(amount) + " м² стены";
     return base;
+  }
+
+  function layingSvg(calc) {
+    const p = productById(calc.productId);
+    if (!p || calc.project !== "yard" || p.category !== "tile") return "";
+    const color = colorObj(p, calc.colorId);
+    const L = Math.max(0.4, Number(calc.yardLength) || 1);
+    const W = Math.max(0.4, Number(calc.yardWidth) || 1);
+    const vw = 360;
+    const vh = 220;
+    const pad = 22;
+    const scale = Math.min((vw - pad * 2) / L, (vh - pad * 2) / W);
+    const rw = L * scale;
+    const rh = W * scale;
+    const x = (vw - rw) / 2;
+    const y = (vh - rh) / 2;
+    const tile = Math.max(9, Math.min(16, rw / 14));
+    const diagonal = calc.pattern === "diagonal";
+    const span = Math.ceil(Math.hypot(rw, rh) + tile * 3);
+    const count = Math.ceil(span / tile);
+    let cells = "";
+    for (let r = 0; r < count; r++) {
+      for (let c = 0; c < count; c++) {
+        const fill = (r + c) % 2 === 0 ? safeHex(color.hex) : shadeHex(color.hex, 0.84);
+        cells +=
+          '<rect x="' +
+          (c * tile).toFixed(1) +
+          '" y="' +
+          (r * tile).toFixed(1) +
+          '" width="' +
+          (tile - 1.2).toFixed(1) +
+          '" height="' +
+          (tile - 1.2).toFixed(1) +
+          '" fill="' +
+          fill +
+          '"/>';
+      }
+    }
+    const ox = ((rw - count * tile) / 2).toFixed(1);
+    const oy = ((rh - count * tile) / 2).toFixed(1);
+    const rot = diagonal
+      ? ' transform="translate(' +
+        (rw / 2).toFixed(1) +
+        " " +
+        (rh / 2).toFixed(1) +
+        ") rotate(45) translate(" +
+        (-(count * tile) / 2).toFixed(1) +
+        " " +
+        (-(count * tile) / 2).toFixed(1) +
+        ')"'
+      : ' transform="translate(' + ox + " " + oy + ')"';
+    const caption = (diagonal ? "Диагональная" : "Прямая") + " укладка · " + formatQty(L) + "×" + formatQty(W) + " м";
+    return (
+      '<figure class="lay-scheme"><svg viewBox="0 0 ' +
+      vw +
+      " " +
+      vh +
+      '" role="img" aria-label="' +
+      esc(caption) +
+      '"><rect x="' +
+      (x - 8).toFixed(1) +
+      '" y="' +
+      (y - 8).toFixed(1) +
+      '" width="' +
+      (rw + 16).toFixed(1) +
+      '" height="' +
+      (rh + 16).toFixed(1) +
+      '" rx="4" fill="#d9cfc2"/><svg x="' +
+      x.toFixed(1) +
+      '" y="' +
+      y.toFixed(1) +
+      '" width="' +
+      rw.toFixed(1) +
+      '" height="' +
+      rh.toFixed(1) +
+      '" viewBox="0 0 ' +
+      rw.toFixed(1) +
+      " " +
+      rh.toFixed(1) +
+      '"><defs><clipPath id="lay-clip"><rect width="' +
+      rw.toFixed(1) +
+      '" height="' +
+      rh.toFixed(1) +
+      '"/></clipPath></defs><g clip-path="url(#lay-clip)"' +
+      rot +
+      ">" +
+      cells +
+      "</g></svg></svg><figcaption>" +
+      esc(caption) +
+      "</figcaption></figure>"
+    );
+  }
+
+  function productLayHtml(p) {
+    if (p.category !== "tile") return "";
+    return (
+      '<div class="product-lay" id="product-lay" data-id="' +
+      p.id +
+      '"><div class="section-h"><h2>Как ляжет во дворе</h2><a href="#/calc" data-action="open-calc" data-id="' +
+      p.id +
+      '">Посчитать свой двор</a></div>' +
+      '<div class="lay-switch" role="group" aria-label="Схема укладки">' +
+      '<button type="button" class="is-on" data-action="lay-pattern" data-pattern="straight" aria-pressed="true">Прямая</button>' +
+      '<button type="button" data-action="lay-pattern" data-pattern="diagonal" aria-pressed="false">Диагональ</button>' +
+      "</div>" +
+      layingSvg({
+        project: "yard",
+        productId: p.id,
+        colorId: p.colors[0].id,
+        yardLength: 6,
+        yardWidth: 4,
+        pattern: "straight",
+      }) +
+      '<p class="note">Схема показывает выбранный цвет на площадке 6×4 м. Это рисунок укладки, не снимок конкретного двора.</p></div>'
+    );
   }
 
   function estimateHtml(est) {
@@ -2200,9 +2828,104 @@
     );
   }
 
+  function setCalcProject(project) {
+    if (["yard", "house", "manual"].indexOf(project) === -1) return;
+    state.calc.project = project;
+    const current = productById(state.calc.productId);
+    if (project === "yard" && (!current || current.category !== "tile")) {
+      state.calc.productId = "kirpich-60";
+      state.calc.colorId = productById(state.calc.productId).colors[0].id;
+      state.calc.withBase = true;
+    }
+    if (project === "house" && (!current || current.category !== "block")) {
+      state.calc.productId = "block-hollow";
+      state.calc.colorId = productById(state.calc.productId).colors[0].id;
+    }
+    state.calc.amount = projectAmount(state.calc);
+    if (project === "yard") state.calc.borderMeters = projectBorderMeters(state.calc);
+  }
+
+  function pickerShell(id, labelId, options) {
+    return (
+      '<div class="picker" data-picker>' +
+      '<select id="' +
+      id +
+      '" class="picker-native" tabindex="-1" aria-hidden="true">' +
+      options +
+      "</select>" +
+      '<button type="button" class="picker-btn" id="' +
+      id +
+      '-btn" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="' +
+      labelId +
+      '">' +
+      '<i class="filter-swatch picker-current" hidden></i>' +
+      '<span class="picker-value"></span>' +
+      '<i class="picker-chevron" aria-hidden="true"></i>' +
+      "</button>" +
+      '<div class="picker-menu" role="listbox" hidden></div></div>'
+    );
+  }
+
+  function closePicker(picker) {
+    picker.classList.remove("is-open");
+    const btn = picker.querySelector(".picker-btn");
+    const menu = picker.querySelector(".picker-menu");
+    if (btn) btn.setAttribute("aria-expanded", "false");
+    if (menu) menu.hidden = true;
+  }
+
+  function mountPicker(select) {
+    const picker = select.closest("[data-picker]");
+    if (!picker) return;
+    const menu = picker.querySelector(".picker-menu");
+    const selected = select.selectedOptions[0];
+    const hasSwatch = [...select.options].some((opt) => opt.dataset.hex);
+    picker.classList.toggle("has-swatch", hasSwatch);
+    const parts = [];
+    function optionButton(opt) {
+      const on = opt === selected;
+      const hex = opt.dataset.hex;
+      return (
+        '<button type="button" class="picker-opt' +
+        (on ? " is-on" : "") +
+        '" role="option" data-picker-value="' +
+        esc(opt.value) +
+        '" aria-selected="' +
+        on +
+        '">' +
+        (hex ? '<i class="filter-swatch" style="background:' + safeHex(hex) + '"></i>' : "") +
+        "<span>" +
+        esc(opt.textContent) +
+        '</span><b aria-hidden="true">✓</b></button>'
+      );
+    }
+    [...select.children].forEach((node) => {
+      if (node.tagName === "OPTGROUP") {
+        if (!node.children.length) return;
+        parts.push('<p class="picker-group">' + esc(node.label) + "</p>");
+        [...node.children].forEach((opt) => parts.push(optionButton(opt)));
+      } else if (node.tagName === "OPTION") {
+        parts.push(optionButton(node));
+      }
+    });
+    menu.innerHTML = parts.join("");
+    const valueEl = picker.querySelector(".picker-value");
+    if (valueEl) valueEl.textContent = selected ? selected.textContent : "";
+    const swatch = picker.querySelector(".picker-current");
+    if (swatch) {
+      const hex = selected && selected.dataset.hex;
+      swatch.hidden = !hex;
+      if (hex) swatch.style.background = safeHex(hex);
+    }
+  }
+
   function renderCalcBody() {
     const calc = state.calc;
-    const paving = PRODUCTS.filter((p) => !p.hidden && (p.category === "tile" || p.category === "block" || p.category === "border"));
+    const project = calc.project || "manual";
+    const projectCat = project === "yard" ? "tile" : project === "house" ? "block" : "";
+    const paving = PRODUCTS.filter(
+      (p) => !p.hidden && (p.category === "tile" || p.category === "block" || p.category === "border") && (!projectCat || p.category === projectCat)
+    );
     const groups = [
       [t("calc.groupTile"), "tile"],
       [t("calc.groupBlock"), "block"],
@@ -2212,61 +2935,207 @@
       .map(([label, cat]) => {
         const inner = paving
           .filter((p) => p.category === cat)
-          .map((p) => '<option value="' + p.id + '"' + (p.id === calc.productId ? " selected" : "") + ">" + esc(p.name) + "</option>")
+          .map(
+            (p) =>
+              '<option value="' +
+              p.id +
+              '" data-hex="' +
+              safeHex(p.colors[0].hex) +
+              '"' +
+              (p.id === calc.productId ? " selected" : "") +
+              ">" +
+              esc(p.name) +
+              "</option>"
+          )
           .join("");
         return "<optgroup label=\"" + esc(label) + "\">" + inner + "</optgroup>";
       })
       .join("");
     const product = productById(calc.productId);
     const showPaving = product.category === "tile";
+    let projectFields = "";
+    if (project === "yard") {
+      projectFields =
+        '<div class="calc-dim-grid"><label class="field"><span>Длина двора, м</span><input id="calc-yard-length" type="number" min="0.1" step="0.1" value="' +
+        calc.yardLength +
+        '"></label><label class="field"><span>Ширина двора, м</span><input id="calc-yard-width" type="number" min="0.1" step="0.1" value="' +
+        calc.yardWidth +
+        '"></label></div><div class="calc-result"><span>Площадь мощения</span><strong id="calc-result-main">' +
+        formatQty(projectAmount(calc)) +
+        ' м²</strong><small id="calc-result-sub">Бордюр по периметру: ' +
+        formatQty(projectBorderMeters(calc)) +
+        " м</small></div>";
+    } else if (project === "house") {
+      projectFields =
+        '<div class="calc-dim-grid"><label class="field"><span>Длина дома, м</span><input id="calc-house-length" type="number" min="0.1" step="0.1" value="' +
+        calc.houseLength +
+        '"></label><label class="field"><span>Ширина дома, м</span><input id="calc-house-width" type="number" min="0.1" step="0.1" value="' +
+        calc.houseWidth +
+        '"></label><label class="field"><span>Высота стен, м</span><input id="calc-house-height" type="number" min="0.1" step="0.1" value="' +
+        calc.houseHeight +
+        '"></label><label class="field"><span>Окна и двери, м²</span><input id="calc-house-openings" type="number" min="0" step="0.1" value="' +
+        calc.houseOpenings +
+        '"></label></div><div class="calc-result"><span>Площадь наружных стен</span><strong id="calc-result-main">' +
+        formatQty(projectAmount(calc)) +
+        ' м²</strong><small id="calc-result-sub">Периметр: ' +
+        formatQty(2 * (Number(calc.houseLength) + Number(calc.houseWidth))) +
+        " м</small></div>";
+    } else {
+      projectFields =
+        '<label class="field"><span id="amount-label">' +
+        esc(product.inputLabel) +
+        '</span><input id="calc-amount" type="number" min="0" step="0.1" value="' +
+        calc.amount +
+        '"></label>';
+    }
     return (
       '<form id="calc-form" class="calc-layout"><div class="sheet"><h2>' + esc(t("calc.inputs")) + "</h2>" +
-      '<label class="field"><span>' + esc(t("calc.product")) + "</span><select id=\"calc-product\">" +
-      options +
-      "</select></label>" +
-      '<label class="field" id="calc-color-field"' +
+      '<div class="calc-projects" role="group" aria-label="Что рассчитать">' +
+      [
+        ["yard", "Двор", "Плитка, бордюр и основание"],
+        ["house", "Дом", "Шлакоблок для наружных стен"],
+        ["manual", "Материал", "Расчёт одной позиции"],
+      ]
+        .map(
+          ([id, title, text]) =>
+            '<button type="button" class="calc-project' +
+            (project === id ? " is-on" : "") +
+            '" data-action="calc-project" data-project="' +
+            id +
+            '" aria-pressed="' +
+            (project === id) +
+            '"><strong>' +
+            title +
+            "</strong><small>" +
+            text +
+            "</small></button>"
+        )
+        .join("") +
+      "</div>" +
+      (project === "yard"
+        ? '<div class="lay-switch" role="group" aria-label="Схема укладки">' +
+          [
+            ["straight", "Прямая"],
+            ["diagonal", "Диагональ"],
+          ]
+            .map(
+              ([id, title]) =>
+                '<button type="button" class="' +
+                (calc.pattern === id ? "is-on" : "") +
+                '" data-action="calc-pattern" data-pattern="' +
+                id +
+                '" aria-pressed="' +
+                (calc.pattern === id) +
+                '">' +
+                title +
+                "</button>"
+            )
+            .join("") +
+          "</div>" +
+          (calc.pattern === "diagonal" ? '<p class="note">На диагональ ставим запас 15%: подрезки больше, чем при прямой укладке.</p>' : "")
+        : "") +
+      projectFields +
+      '<div class="field"><span id="calc-product-label">' +
+      esc(t("calc.product")) +
+      "</span>" +
+      pickerShell("calc-product", "calc-product-label", options) +
+      "</div>" +
+      '<div class="field" id="calc-color-field"' +
       (product.colors.length < 2 ? " hidden" : "") +
-      '><span>' + esc(t("calc.color")) + "</span><select id=\"calc-color\">" +
-      product.colors
-        .map((c) => '<option value="' + c.id + '"' + (c.id === calc.colorId ? " selected" : "") + ">" + esc(c.name) + "</option>")
-        .join("") +
-      "</select></label>" +
-      '<label class="field"><span id="amount-label">' +
-      esc(product.inputLabel) +
-      '</span><input id="calc-amount" type="number" min="0" step="0.1" value="' +
-      calc.amount +
-      '"></label>' +
-      '<label class="field"><span>' + esc(t("calc.reserve")) + "</span><select id=\"calc-reserve\">" +
-      [0, 5, 7, 10]
-        .map((n) => '<option value="' + n + '"' + (Number(calc.reserve) === n ? " selected" : "") + ">" + n + "%</option>")
-        .join("") +
-      "</select></label>" +
+      '><span id="calc-color-label">' +
+      esc(t("calc.color")) +
+      "</span>" +
+      pickerShell(
+        "calc-color",
+        "calc-color-label",
+        product.colors
+          .map(
+            (c) =>
+              '<option value="' +
+              c.id +
+              '" data-hex="' +
+              safeHex(c.hex) +
+              '"' +
+              (c.id === calc.colorId ? " selected" : "") +
+              ">" +
+              esc(c.name) +
+              "</option>"
+          )
+          .join("")
+      ) +
+      "</div>" +
+      '<div class="field"><span id="calc-reserve-label">' +
+      esc(t("calc.reserve")) +
+      "</span>" +
+      pickerShell(
+        "calc-reserve",
+        "calc-reserve-label",
+        [0, 5, 7, 10, 15]
+          .map((n) => '<option value="' + n + '"' + (Number(calc.reserve) === n ? " selected" : "") + ">" + n + "%</option>")
+          .join("")
+      ) +
+      "</div>" +
       '<div id="paving-extra"' +
       (showPaving ? "" : " hidden") +
       ">" +
-      '<label class="field"><span>' + esc(t("calc.border")) + "</span><select id=\"calc-border\">" +
-      PRODUCTS.filter((p) => p.category === "border" && !p.hidden)
-        .map((p) => '<option value="' + p.id + '"' + (p.id === calc.borderId ? " selected" : "") + ">" + esc(p.name) + " — " + formatMoney(p.price) + "</option>")
-        .join("") +
-      '</select></label><label class="field"><span>' + esc(t("calc.borderM")) + "</span><input id=\"calc-border-m\" type=\"number\" min=\"0\" step=\"1\" value=\"" +
-      calc.borderMeters +
-      '"></label>' +
-      '<label class="check"><input id="calc-base" type="checkbox"' +
+      '<div class="field"><span id="calc-border-label">' +
+      esc(t("calc.border")) +
+      "</span>" +
+      pickerShell(
+        "calc-border",
+        "calc-border-label",
+        PRODUCTS.filter((p) => p.category === "border" && !p.hidden)
+          .map(
+            (p) =>
+              '<option value="' +
+              p.id +
+              '" data-hex="' +
+              safeHex(p.colors[0].hex) +
+              '"' +
+              (p.id === calc.borderId ? " selected" : "") +
+              ">" +
+              esc(p.name) +
+              " — " +
+              formatMoney(p.price) +
+              "</option>"
+          )
+          .join("")
+      ) +
+      "</div>" +
+      (project === "manual"
+        ? '<label class="field"><span>' + esc(t("calc.borderM")) + '</span><input id="calc-border-m" type="number" min="0" step="1" value="' + calc.borderMeters + '"></label>'
+        : "") +
+      '<label class="base-toggle"><input id="calc-base" type="checkbox"' +
       (calc.withBase ? " checked" : "") +
-      "> " + esc(t("calc.base")) + "</label></div>" +
-      '<label class="field"><span>' + esc(t("calc.delivery")) + "</span><select id=\"calc-delivery\">" +
-      SITE.delivery
-        .map((d) => '<option value="' + d.id + '"' + (d.id === calc.delivery ? " selected" : "") + ">" + esc(d.name) + " — " + formatMoney(d.price) + "</option>")
-        .join("") +
-      "</select></label></div>" +
+      '><span class="base-mark" aria-hidden="true"></span><span>' +
+      esc(t("calc.base")) +
+      "</span></label></div>" +
+      '<div class="field"><span id="calc-delivery-label">' +
+      esc(t("calc.delivery")) +
+      "</span>" +
+      pickerShell(
+        "calc-delivery",
+        "calc-delivery-label",
+        SITE.delivery
+          .map((d) => '<option value="' + d.id + '"' + (d.id === calc.delivery ? " selected" : "") + ">" + esc(d.name) + " — " + formatMoney(d.price) + "</option>")
+          .join("")
+      ) +
+      "</div></div>" +
       '<div id="estimate">' +
+      layingSvg(calc) +
       estimateHtml(buildEstimate(calc)) +
       "</div></form>"
     );
   }
 
   function renderCalc() {
-    return '<section class="page"><div class="wrap">' + pageHead(t("calc.title"), t("calc.lede")) + renderCalcBody() + "</div></section>";
+    return (
+      '<section class="page"><div class="wrap">' +
+      pageHead(t("calc.title"), "Выберите двор или дом, укажите размеры — калькулятор покажет схему укладки, количество материалов и общую сумму.") +
+      '<div id="calc-root">' +
+      renderCalcBody() +
+      "</div></div></section>"
+    );
   }
 
   function renderDelivery() {
@@ -2381,13 +3250,12 @@
           '</div><div class="summary"><h2>' + esc(t("cart.total")) + '</h2><p class="product-sum">' +
           formatMoney(cartTotal()) +
           '</p><p class="note">' + esc(t("cart.deliveryNote")) + '</p><form id="checkout">' +
-          '<label class="field"><span>' + esc(t("contacts.name")) + '</span><input name="name" autocomplete="name"></label>' +
-          '<label class="field"><span>' + esc(t("contacts.phone")) + '</span><input name="phone" autocomplete="tel" inputmode="tel"></label>' +
+          '<label class="field"><span>' + esc(t("contacts.name")) + '</span><input name="name" autocomplete="name" required></label>' +
+          '<label class="field"><span>' + esc(t("contacts.phone")) + '</span><input name="phone" autocomplete="tel" inputmode="tel" required></label>' +
+          '<label class="field"><span>' + esc(t("cart.email")) + '</span><input name="mail" type="email" autocomplete="email" inputmode="email" required></label>' +
           '<label class="field"><span>' + esc(t("cart.address")) + '</span><textarea name="comment"></textarea></label>' +
           '<p class="form-error" hidden></p><button class="btn" type="submit">' + esc(t("cart.submit")) + "</button>" +
-          '<p class="note">' +
-          esc(canEmail() ? t("cart.noteMail") : t("cart.noteCall")) +
-          "</p></form></div></div>"
+          '<p class="note">' + esc(t("cart.noteMail")) + "</p></form></div></div>"
         : '<div class="empty"><p>' + esc(t("cart.empty")) + '</p><p><a class="btn" href="#/catalog">' + esc(t("cart.toCatalog")) + '</a> <a class="btn btn-line paper-line" href="#/calc">' + esc(t("cart.toCalc")) + "</a></p></div>") +
       "</div></section>"
     );
@@ -2410,11 +3278,13 @@
           esc(p.colors.length > 1 ? color.name + " · " : "") +
           esc(p.size) +
           '</span></div><strong class="line-sum">' +
-          formatMoney(p.price) +
-          "/" +
-          esc(p.unit) +
+          formatMoney(offerPrice(p)) +
+          " " +
+          esc(offerLabel(p)) +
           '</strong><button type="button" class="btn" data-action="add" data-id="' +
           p.id +
+          '" data-qty="' +
+          offerQty(p) +
           '" data-color="' +
           color.id +
           '">' + esc(t("product.cart")) + '</button><button type="button" class="icon-x" data-action="fav" data-id="' +
@@ -2440,8 +3310,10 @@
     const banner = state.order
       ? '<div class="banner"><h2>' + fill("orders.accepted", { n: state.order.n }) + "</h2><p>" +
         fill("orders.who", { name: state.order.name, phone: state.order.phone }) + "</p><p>" +
-        (state.order.mailed ? esc(t("orders.mail")) : fill("orders.call", { phone: SITE.phone })) +
-        "</p></div>"
+        fill(state.order.mailOk ? "orders.mailOk" : "orders.mail", { email: state.order.email }) +
+        "</p>" +
+        orderStagesHtml("Принят") +
+        "</div>"
       : "";
     const list = orders
       .map((order) => {
@@ -2465,14 +3337,16 @@
               .join("") +
             "</ul>"
           : "<p>" + esc(order.summary || "") + "</p>";
+        const status = order.status || t("orders.status");
         return (
           '<article class="sheet order"><div class="order-top"><h2>' +
           esc(order.n || t("orders.fallback")) +
           '</h2><span class="badge">' +
-          esc(order.status || t("orders.status")) +
+          esc(status) +
           "</span></div><p class=\"meta\">" +
-          esc([formatWhen(order.at), order.name, order.phone].filter(Boolean).join(" · ")) +
+          esc([formatWhen(order.at), order.name, order.phone, order.mail].filter(Boolean).join(" · ")) +
           "</p>" +
+          (order.mail ? orderStagesHtml(status) : "") +
           rows +
           (order.total != null ? '<p class="product-sum">' + formatMoney(order.total) + "</p>" : "") +
           (order.comment ? '<p class="note">' + esc(order.comment) + "</p>" : "") +
@@ -2489,8 +3363,95 @@
     );
   }
 
+  function renderCompare() {
+    const items = compare.map(productById).filter(Boolean);
+    if (items.length < 2) {
+      return (
+        '<section class="page"><div class="wrap">' +
+        pageHead("Сравнение", "Отметьте две или три позиции в каталоге. В таблице будут размер, морозостойкость и цена.") +
+        '<p><a class="btn" href="#/catalog">Перейти в каталог</a></p></div></section>'
+      );
+    }
+    const head = items
+      .map(
+        (p) =>
+          '<th><a href="#/product/' +
+          p.id +
+          '">' +
+          esc(p.name) +
+          '</a><div><button type="button" class="card-compare" data-action="compare" data-id="' +
+          p.id +
+          '">Убрать</button></div></th>'
+      )
+      .join("");
+    const rows = [
+      ["", (p) => photoHtml(p, p.colors[0].id)],
+      ["Размер", (p) => esc(p.size)],
+      ["Толщина", (p) => (p.thickness ? esc(String(p.thickness)) + " мм" : "—")],
+      ["Морозостойкость", (p) => esc(p.frost || "—")],
+      ["Цена", (p) => "<strong>" + formatMoney(p.price) + "/" + esc(p.unit) + "</strong>"],
+      ["Дополнительно", (p) => esc(secondaryPrice(p) || "—")],
+      ["Наличие", (p) => esc(p.stock)],
+    ]
+      .map((row) => {
+        return "<tr><th>" + row[0] + "</th>" + items.map((p) => "<td>" + row[1](p) + "</td>").join("") + "</tr>";
+      })
+      .join("");
+    return (
+      '<section class="page"><div class="wrap">' +
+      pageHead("Сравнение", "До трёх позиций: толщина, морозостойкость, цена за единицу и за штуку.") +
+      '<div class="compare-wrap"><table class="compare"><thead><tr><th></th>' +
+      head +
+      "</tr></thead><tbody>" +
+      rows +
+      "</tbody></table></div></div></section>"
+    );
+  }
+
+  function renderCompareDock() {
+    let dock = document.getElementById("compare-dock");
+    if (!dock) {
+      dock = document.createElement("div");
+      dock.id = "compare-dock";
+      dock.className = "compare-dock";
+      document.body.appendChild(dock);
+    }
+    if (!compare.length) {
+      dock.hidden = true;
+      dock.innerHTML = "";
+      document.body.classList.remove("has-compare");
+      return;
+    }
+    document.body.classList.add("has-compare");
+    dock.hidden = false;
+    const names = compare
+      .map((id) => {
+        const p = productById(id);
+        return p ? esc(p.name) : "";
+      })
+      .filter(Boolean)
+      .join(" · ");
+    dock.innerHTML =
+      "<span>" +
+      names +
+      '</span><a class="btn" href="#/compare">Сравнить ' +
+      compare.length +
+      '</a><button type="button" data-action="compare-clear">Очистить</button>';
+  }
+
+  function paintCompare() {
+    document.querySelectorAll("[data-action=compare]").forEach((btn) => {
+      if (btn.textContent === "Убрать") return;
+      const on = compare.indexOf(btn.dataset.id) !== -1;
+      btn.classList.toggle("is-on", on);
+      btn.textContent = on ? "В сравнении" : "Сравнить";
+    });
+    renderCompareDock();
+  }
+
   function htmlFor(page, parts) {
     if (page === "catalog") return renderCatalog();
+    if (page === "compare") return renderCompare();
     if (page === "product") return renderProduct(parts[1]);
     if (page === "calc") return renderCalc();
     if (page === "delivery") return renderDelivery();
@@ -2522,7 +3483,18 @@
     if (!p.colors.some((c) => c.id === state.calc.colorId)) state.calc.colorId = p.colors[0].id;
     field.hidden = p.colors.length < 2;
     sel.innerHTML = p.colors
-      .map((c) => '<option value="' + c.id + '"' + (c.id === state.calc.colorId ? " selected" : "") + ">" + esc(c.name) + "</option>")
+      .map(
+        (c) =>
+          '<option value="' +
+          c.id +
+          '" data-hex="' +
+          safeHex(c.hex) +
+          '"' +
+          (c.id === state.calc.colorId ? " selected" : "") +
+          ">" +
+          esc(c.name) +
+          "</option>"
+      )
       .join("");
     const label = document.getElementById("amount-label");
     if (label) label.textContent = p.inputLabel;
@@ -2533,7 +3505,20 @@
   function syncEstimate() {
     const box = document.getElementById("estimate");
     if (!box) return;
-    box.innerHTML = estimateHtml(buildEstimate(state.calc));
+    box.innerHTML = layingSvg(state.calc) + estimateHtml(buildEstimate(state.calc));
+  }
+
+  function syncProjectMetrics() {
+    const main = document.getElementById("calc-result-main");
+    const sub = document.getElementById("calc-result-sub");
+    if (!main || !sub) return;
+    main.textContent = formatQty(projectAmount(state.calc)) + " м²";
+    if (state.calc.project === "yard") {
+      sub.textContent = "Бордюр по периметру: " + formatQty(projectBorderMeters(state.calc)) + " м";
+    } else {
+      sub.textContent =
+        "Периметр: " + formatQty(2 * (Number(state.calc.houseLength) + Number(state.calc.houseWidth))) + " м";
+    }
   }
 
   function readCalc() {
@@ -2541,35 +3526,189 @@
     if (!g("calc-product")) return;
     state.calc.productId = g("calc-product").value;
     if (g("calc-color") && !g("calc-color-field").hidden) state.calc.colorId = g("calc-color").value;
-    state.calc.amount = g("calc-amount").value;
+    if (g("calc-amount")) state.calc.amount = g("calc-amount").value;
+    if (g("calc-yard-length")) state.calc.yardLength = g("calc-yard-length").value;
+    if (g("calc-yard-width")) state.calc.yardWidth = g("calc-yard-width").value;
+    if (g("calc-house-length")) state.calc.houseLength = g("calc-house-length").value;
+    if (g("calc-house-width")) state.calc.houseWidth = g("calc-house-width").value;
+    if (g("calc-house-height")) state.calc.houseHeight = g("calc-house-height").value;
+    if (g("calc-house-openings")) state.calc.houseOpenings = g("calc-house-openings").value;
     state.calc.reserve = Number(g("calc-reserve").value);
     if (g("calc-border")) state.calc.borderId = g("calc-border").value;
     if (g("calc-border-m")) state.calc.borderMeters = g("calc-border-m").value;
     if (g("calc-base")) state.calc.withBase = g("calc-base").checked;
     if (g("calc-delivery")) state.calc.delivery = g("calc-delivery").value;
+    state.calc.amount = projectAmount(state.calc);
+    if (state.calc.project === "yard") state.calc.borderMeters = projectBorderMeters(state.calc);
   }
 
   function hookCalc() {
     const form = document.getElementById("calc-form");
     if (!form) return;
+    form.querySelectorAll("[data-picker] select").forEach(mountPicker);
     form.addEventListener("submit", (e) => e.preventDefault());
+    form.addEventListener("click", (e) => {
+      const opt = e.target.closest("[data-picker-value]");
+      if (opt) {
+        e.preventDefault();
+        const picker = opt.closest("[data-picker]");
+        const select = picker.querySelector("select");
+        select.value = opt.dataset.pickerValue;
+        closePicker(picker);
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+        return;
+      }
+      const toggle = e.target.closest(".picker-btn");
+      if (!toggle || !form.contains(toggle)) return;
+      e.preventDefault();
+      const picker = toggle.closest("[data-picker]");
+      const willOpen = !picker.classList.contains("is-open");
+      document.querySelectorAll("[data-picker].is-open").forEach(closePicker);
+      if (!willOpen) return;
+      picker.classList.add("is-open");
+      toggle.setAttribute("aria-expanded", "true");
+      const menu = picker.querySelector(".picker-menu");
+      if (menu) {
+        menu.hidden = false;
+        menu.classList.remove("is-up");
+        const below = window.innerHeight - toggle.getBoundingClientRect().bottom;
+        const above = toggle.getBoundingClientRect().top;
+        const need = Math.min(menu.scrollHeight, 280) + 16;
+        if (below < need && above > below) menu.classList.add("is-up");
+      }
+    });
+    form.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape") return;
+      form.querySelectorAll("[data-picker].is-open").forEach(closePicker);
+    });
     form.addEventListener("input", () => {
       readCalc();
+      syncProjectMetrics();
       syncEstimate();
     });
     form.addEventListener("change", () => {
       readCalc();
       paintCalcColors();
+      form.querySelectorAll("[data-picker] select").forEach(mountPicker);
+      syncProjectMetrics();
       syncEstimate();
     });
+  }
+
+  function hookPromo() {
+    clearInterval(promoTimer);
+    promoTimer = 0;
+    const stage = document.querySelector("[data-promo]");
+    if (!stage) return;
+    const track = stage.querySelector(".promo-track");
+    const slides = [...track.children];
+    if (slides.length < 2) return;
+    let index = 0;
+    let startX = 0;
+    let startY = 0;
+    let dx = 0;
+    let tracking = false;
+    let dragged = false;
+    let swallow = false;
+
+    function show(n) {
+      index = (n + slides.length) % slides.length;
+      track.classList.add("is-moving");
+      track.style.transform = "translateX(" + -index * 100 + "%)";
+      clearTimeout(track._moveTimer);
+      track._moveTimer = setTimeout(() => track.classList.remove("is-moving"), 480);
+      slides.forEach((slide, i) => {
+        slide.inert = i !== index;
+      });
+      stage.querySelectorAll("[data-promo-go]").forEach((dot, i) => {
+        const on = i === index;
+        dot.classList.toggle("is-on", on);
+        dot.setAttribute("aria-selected", on ? "true" : "false");
+      });
+    }
+
+    function arm() {
+      clearInterval(promoTimer);
+      if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+      promoTimer = setInterval(() => show(index + 1), 4500);
+    }
+
+    stage.querySelectorAll("[data-promo-dir]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        show(index + Number(btn.dataset.promoDir));
+        arm();
+      });
+    });
+    stage.querySelectorAll("[data-promo-go]").forEach((dot) => {
+      dot.addEventListener("click", () => {
+        show(Number(dot.dataset.promoGo));
+        arm();
+      });
+    });
+    const viewport = stage.querySelector(".promo-viewport");
+    viewport.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0 || e.target.closest(".promo-arrow")) return;
+      tracking = true;
+      dragged = false;
+      startX = e.clientX;
+      startY = e.clientY;
+      dx = 0;
+    });
+    viewport.addEventListener("pointermove", (e) => {
+      if (!tracking) return;
+      dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      if (!dragged && Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy)) {
+        dragged = true;
+        viewport.setPointerCapture(e.pointerId);
+      }
+    });
+    function endSwipe() {
+      if (!tracking) return;
+      tracking = false;
+      if (dragged && Math.abs(dx) > 48) {
+        show(index + (dx < 0 ? 1 : -1));
+        swallow = true;
+        arm();
+      }
+      dragged = false;
+    }
+    viewport.addEventListener("pointerup", endSwipe);
+    viewport.addEventListener("pointercancel", endSwipe);
+    viewport.addEventListener(
+      "click",
+      (e) => {
+        if (!swallow) return;
+        e.preventDefault();
+        e.stopPropagation();
+        swallow = false;
+      },
+      true
+    );
+    if (promoWatch) document.removeEventListener("visibilitychange", promoWatch);
+    promoWatch = () => {
+      if (document.hidden) {
+        clearInterval(promoTimer);
+        promoTimer = 0;
+      } else if (document.querySelector("[data-promo]") === stage) arm();
+    };
+    document.addEventListener("visibilitychange", promoWatch);
+    show(0);
+    arm();
   }
 
   function hookPage() {
     const q = document.getElementById("q");
     if (q) {
+      let searchFrame = 0;
       q.addEventListener("input", () => {
-        state.q = q.value;
-        fillGrid();
+        if (searchFrame) return;
+        searchFrame = requestAnimationFrame(() => {
+          searchFrame = 0;
+          if (!q.isConnected) return;
+          state.q = q.value;
+          fillGrid();
+        });
       });
     }
     [
@@ -2604,7 +3743,33 @@
       mountYard(yard, "tile");
     }
     bindModelSpins(document.getElementById("view"));
+    hookBuyBar();
+    renderCompareDock();
+    hookPromo();
     if (document.body.classList.contains("is-admin") && window.KDAdmin) KDAdmin.hook(document.getElementById("view"));
+  }
+
+  function hookBuyBar() {
+    const bar = document.getElementById("buy-bar");
+    const anchor = document.querySelector(".qty-row [data-action=add-qty]");
+    if (buyBarWatch) {
+      buyBarWatch.disconnect();
+      buyBarWatch = null;
+    }
+    document.body.classList.remove("has-buybar");
+    if (!bar || !anchor) {
+      if (bar) bar.hidden = true;
+      return;
+    }
+    buyBarWatch = new IntersectionObserver(
+      (entries) => {
+        const visible = entries[0] && entries[0].isIntersecting;
+        bar.hidden = !!visible;
+        document.body.classList.toggle("has-buybar", !visible);
+      },
+      { threshold: 0.15 }
+    );
+    buyBarWatch.observe(anchor);
   }
 
   function updateChrome(page, parts) {
@@ -2621,6 +3786,7 @@
     const titles = {
       home: t("chrome.logo") + " — " + t("chrome.titleTail"),
       catalog: t("catalog.title") + " — " + t("chrome.logo"),
+      compare: "Сравнение — " + t("chrome.logo"),
       calc: t("calc.title") + " — " + t("chrome.logo"),
       delivery: t("delivery.title") + " — " + t("chrome.logo"),
       contacts: t("contacts.title") + " — " + t("chrome.logo"),
@@ -2633,6 +3799,70 @@
       const p = productById(parts[1]);
       document.title = p ? p.name + " — " + t("chrome.logo") : t("chrome.logo");
     } else document.title = titles[page] || t("chrome.logo");
+    paintThemeToggle();
+  }
+
+  function themeIsDark() {
+    return document.documentElement.dataset.theme === "dark";
+  }
+
+  function paintThemeToggle() {
+    const btn = document.querySelector("[data-action=theme]");
+    if (!btn) return;
+    const dark = themeIsDark();
+    btn.setAttribute("aria-pressed", dark ? "true" : "false");
+    btn.setAttribute("aria-label", dark ? t("chrome.themeLight") : t("chrome.themeDark"));
+    const scheme = document.querySelector('meta[name="color-scheme"]');
+    if (scheme) scheme.content = dark ? "dark" : "light";
+    const color = document.querySelector('meta[name="theme-color"]');
+    if (color) color.content = dark ? "#141210" : "#1b1916";
+  }
+
+  function applyTheme(dark) {
+    const root = document.documentElement;
+    if (dark) root.dataset.theme = "dark";
+    else delete root.dataset.theme;
+    try {
+      localStorage.setItem("kd-theme", dark ? "dark" : "light");
+    } catch (e) {}
+    paintThemeToggle();
+  }
+
+  let themeVt = null;
+  function toggleTheme(event, btn) {
+    if (themeVt) return;
+    const goingDark = !themeIsDark();
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const run = () => applyTheme(goingDark);
+    if (reduce || typeof document.startViewTransition !== "function") {
+      run();
+      return;
+    }
+    const rect = btn.getBoundingClientRect();
+    const x = event.clientX || rect.left + rect.width / 2;
+    const y = event.clientY || rect.top + rect.height / 2;
+    const endRadius = Math.hypot(Math.max(x, window.innerWidth - x), Math.max(y, window.innerHeight - y));
+    const root = document.documentElement;
+    root.dataset.themeVt = goingDark ? "to-dark" : "to-light";
+    const transition = document.startViewTransition(run);
+    themeVt = transition;
+    transition.ready.then(() => {
+      const clip = ["circle(0px at " + x + "px " + y + "px)", "circle(" + endRadius + "px at " + x + "px " + y + "px)"];
+      root.animate(
+        { clipPath: goingDark ? clip : clip.slice().reverse() },
+        {
+          duration: 900,
+          easing: "cubic-bezier(0.22, 1, 0.36, 1)",
+          fill: "both",
+          pseudoElement: goingDark ? "::view-transition-new(root)" : "::view-transition-old(root)",
+        }
+      );
+    });
+    const done = () => {
+      themeVt = null;
+      delete root.dataset.themeVt;
+    };
+    transition.finished.then(done, done);
   }
 
   function findLine(id, colorId) {
@@ -2736,8 +3966,86 @@
   }
 
   function closeCallback() {
-    document.getElementById("callback").hidden = true;
+    const callback = document.getElementById("callback");
+    const sample = document.getElementById("sample");
+    if (callback) callback.hidden = true;
+    if (sample) sample.hidden = true;
     document.body.classList.remove("locked");
+  }
+
+  function openSample(productId, colorId) {
+    const modal = document.getElementById("sample");
+    const form = document.getElementById("sample-form");
+    const thanks = document.getElementById("sample-thanks");
+    if (!modal || !form) return;
+    const product = productById(productId);
+    const options =
+      '<option value="">Не добавлять</option>' +
+      PRODUCTS.filter((p) => !p.hidden)
+        .map((p) => '<option value="' + p.id + '">' + esc(p.name) + "</option>")
+        .join("");
+    const note = document.getElementById("sample-color-note");
+    const color = product ? colorObj(product, colorId) : null;
+    const hint = document.getElementById("sample-hint");
+    if (hint) {
+      hint.textContent = color && product && product.colors.length > 1 ? "Первый образец: " + product.name + ", " + color.name.toLowerCase() + "." : "Можно выбрать до трёх позиций.";
+    }
+    modal.hidden = false;
+    form.hidden = false;
+    if (thanks) thanks.hidden = true;
+    form.reset();
+    ["sample-1", "sample-2", "sample-3"].forEach((id, index) => {
+      const sel = document.getElementById(id);
+      if (!sel) return;
+      sel.innerHTML = options;
+      sel.value = index === 0 && product ? product.id : "";
+    });
+    if (note) note.value = color && product && product.colors.length > 1 ? color.name : "";
+    const err = form.querySelector(".form-error");
+    if (err) err.hidden = true;
+    document.body.classList.add("locked");
+    const name = form.querySelector("input[name=name]");
+    if (name) name.focus();
+  }
+
+  function submitSample(form) {
+    const name = form.name.value.trim();
+    const phone = form.phone.value.trim();
+    if (name.length < 2) return showFormError(form, t("cart.errName"));
+    if (!validPhone(phone)) return showFormError(form, t("cart.errPhone"));
+    const ids = ["sample-1", "sample-2", "sample-3"]
+      .map((id) => {
+        const sel = document.getElementById(id);
+        return sel ? sel.value : "";
+      })
+      .filter(Boolean);
+    const unique = ids.filter((id, index) => ids.indexOf(id) === index);
+    if (!unique.length) return showFormError(form, "Выберите хотя бы одну позицию");
+    const lines = unique
+      .map((id) => {
+        const p = productById(id);
+        return p ? p.name : "";
+      })
+      .filter(Boolean)
+      .join(", ");
+    const colorNote = form.colorNote.value.trim();
+    const comment = form.comment.value.trim();
+    const n = "КД-" + String(Date.now()).slice(-6);
+    const mailed = openMail("Образцы " + n, leadText(name, phone, comment, lines + (colorNote ? "\nЦвет первого образца: " + colorNote : "")));
+    rememberLead({
+      n: n,
+      kind: "sample",
+      name: name,
+      phone: phone,
+      comment: comment,
+      lines: lines,
+      color: colorNote,
+      at: new Date().toISOString(),
+    });
+    form.hidden = true;
+    const thanks = document.getElementById("sample-thanks");
+    thanks.hidden = false;
+    thanks.querySelector("p").textContent = mailed ? t("contacts.thanksMail") : raw("contacts.thanksCall", { phone: SITE.phone });
   }
 
   function leadText(name, phone, comment, lines) {
@@ -2757,9 +4065,18 @@
     const name = form.name.value.trim();
     const phone = form.phone.value.trim();
     const comment = form.comment.value.trim();
+    const mail = form.mail.value.trim();
     if (name.length < 2) return showFormError(form, t("cart.errName"));
     if (!validPhone(phone)) return showFormError(form, t("cart.errPhone"));
+    if (!validMail(mail)) return showFormError(form, t("cart.errEmail"));
     if (!cart.length) return showFormError(form, t("cart.errEmpty"));
+    const err = form.querySelector(".form-error");
+    if (err) err.hidden = true;
+    const button = form.querySelector('button[type="submit"]');
+    if (button) {
+      button.disabled = true;
+      button.textContent = t("cart.sending");
+    }
     const lines = cart.map((line) => {
       const p = productById(line.id);
       const c = colorObj(p, line.colorId);
@@ -2777,24 +4094,32 @@
       .join("; ");
     const total = cartTotal();
     const n = "КД-" + String(Date.now()).slice(-6);
-    const body = leadText(name, phone, comment, summary);
-    rememberLead({
+    const lead = {
       kind: "order",
       n: n,
       name: name,
       phone: phone,
+      mail: mail,
       comment: comment,
       summary: summary,
       lines: lines,
       total: total,
       status: "Принят",
       at: new Date().toISOString(),
+    };
+    rememberLead(lead).then(function (saved) {
+      state.order = {
+        n: n,
+        name: name,
+        phone: phone,
+        email: mail,
+        summary: summary,
+        mailOk: orderMailOk(saved, "Принят"),
+      };
+      cart = [];
+      saveCart();
+      location.hash = "#/orders";
     });
-    const mailed = openMail("Заказ " + n + " с сайта", body);
-    state.order = { n: n, name: name, phone: phone, summary: summary, mailed: mailed };
-    cart = [];
-    saveCart();
-    location.hash = "#/orders";
   }
 
   function submitSimple(form, boxId) {
@@ -2822,7 +4147,7 @@
     if (query.get("cat") && allowed.indexOf(query.get("cat")) !== -1) state.cat = query.get("cat");
     const page = parts[0] || "home";
     if (page !== "orders") state.order = null;
-    const known = ["home", "catalog", "product", "calc", "delivery", "contacts", "cart", "fav", "orders", "admin"];
+    const known = ["home", "catalog", "product", "calc", "compare", "delivery", "contacts", "cart", "fav", "orders", "admin"];
     const view = document.getElementById("view");
     document.body.classList.toggle("is-admin", page === "admin");
     view.innerHTML = htmlFor(known.indexOf(page) === -1 ? "missing" : page, parts);
@@ -2835,16 +4160,52 @@
 
   function hookGlobal() {
     document.addEventListener("click", (e) => {
+      const currentFilterMenu = e.target.closest("[data-filter-menu]");
+      document.querySelectorAll("[data-filter-menu][open]").forEach((menu) => {
+        if (menu !== currentFilterMenu) menu.removeAttribute("open");
+      });
+      const currentPicker = e.target.closest("[data-picker]");
+      document.querySelectorAll("[data-picker].is-open").forEach((picker) => {
+        if (picker !== currentPicker) closePicker(picker);
+      });
       const btn = e.target.closest("[data-action]");
       if (!btn) return;
       const action = btn.dataset.action;
-      if (action === "menu") {
+      if (action === "theme") {
+        toggleTheme(e, btn);
+      } else if (action === "menu") {
         const open = document.body.classList.toggle("nav-open");
         btn.setAttribute("aria-expanded", String(open));
+      } else if (action === "calc-pattern") {
+        readCalc();
+        state.calc.pattern = btn.dataset.pattern === "diagonal" ? "diagonal" : "straight";
+        if (state.calc.pattern === "diagonal" && Number(state.calc.reserve) < 15) state.calc.reserve = 15;
+        const root = document.getElementById("calc-root");
+        if (root) {
+          root.innerHTML = renderCalcBody();
+          hookCalc();
+        }
+      } else if (action === "calc-project") {
+        readCalc();
+        setCalcProject(btn.dataset.project);
+        const root = document.getElementById("calc-root");
+        if (root) {
+          root.innerHTML = renderCalcBody();
+          hookCalc();
+        }
       } else if (action === "callback") {
         openCallback();
       } else if (action === "close-modal") {
         closeCallback();
+      } else if (action === "set-filter") {
+        const key = btn.dataset.filter;
+        if (["color", "thick", "sort"].indexOf(key) === -1) return;
+        state[key] = btn.dataset.value;
+        paintFilterMenu(key, state[key]);
+        const menu = btn.closest("[data-filter-menu]");
+        if (menu) menu.removeAttribute("open");
+        fillGrid();
+        animateCatalogFilter();
       } else if (action === "set-cat") {
         state.cat = btn.dataset.cat;
         if (state.cat !== "all" && state.cat !== "tile") state.thick = "all";
@@ -2856,7 +4217,9 @@
           chip.setAttribute("aria-pressed", String(on));
         });
         history.replaceState(null, "", "#/catalog?cat=" + encodeURIComponent(state.cat));
+        paintFilterMenu("thick", state.thick);
         fillGrid();
+        animateCatalogFilter();
       } else if (action === "reset-filters") {
         state.cat = "all";
         state.color = "all";
@@ -2868,13 +4231,56 @@
       } else if (action === "pick-color") {
         const root = btn.closest("[data-color-scope]") || btn.closest(".card");
         root.querySelectorAll(".dot").forEach((d) => d.classList.toggle("is-on", d === btn));
-        root.querySelectorAll("[data-action=add], [data-action=add-qty], [data-action=fav]").forEach((add) => {
+        root.querySelectorAll("[data-action=add], [data-action=add-qty], [data-action=buy], [data-action=fav], [data-action=sample], [data-action=open-calc]").forEach((add) => {
           add.dataset.color = btn.dataset.color;
         });
         root.querySelectorAll("[data-action=fav]").forEach(paintFav);
         const media = root.querySelector("[data-media]");
         const product = productById(btn.dataset.id);
         if (media && product) showMedia(media, product, btn.dataset.color);
+        const picked = product ? colorObj(product, btn.dataset.color) : null;
+        const colorName = root.querySelector(".color-name");
+        if (colorName && picked) colorName.textContent = picked.name;
+        const barMeta = document.getElementById("buy-bar-meta");
+        if (barMeta && product && picked && root.contains(barMeta)) {
+          barMeta.textContent = picked.name + " · " + formatMoney(product.price) + "/" + product.unit;
+        }
+        const lay = document.getElementById("product-lay");
+        if (lay && product && lay.dataset.id === product.id && product.category === "tile") {
+          const figure = lay.querySelector(".lay-scheme");
+          const patternBtn = lay.querySelector("[data-action=lay-pattern].is-on");
+          if (figure) {
+            figure.outerHTML = layingSvg({
+              project: "yard",
+              productId: product.id,
+              colorId: btn.dataset.color,
+              yardLength: 6,
+              yardWidth: 4,
+              pattern: patternBtn && patternBtn.dataset.pattern === "diagonal" ? "diagonal" : "straight",
+            });
+          }
+        }
+      } else if (action === "lay-pattern") {
+        const lay = document.getElementById("product-lay");
+        const product = lay && productById(lay.dataset.id);
+        if (!lay || !product) return;
+        lay.querySelectorAll("[data-action=lay-pattern]").forEach((b) => {
+          const on = b === btn;
+          b.classList.toggle("is-on", on);
+          b.setAttribute("aria-pressed", String(on));
+        });
+        const media = document.querySelector(".product [data-media]");
+        const figure = lay.querySelector(".lay-scheme");
+        if (figure) {
+          figure.outerHTML = layingSvg({
+            project: "yard",
+            productId: product.id,
+            colorId: (media && media.dataset.color) || product.colors[0].id,
+            yardLength: 6,
+            yardWidth: 4,
+            pattern: btn.dataset.pattern === "diagonal" ? "diagonal" : "straight",
+          });
+        }
       } else if (action === "set-view") {
         const frame = btn.closest(".media-frame");
         const media = frame && frame.querySelector("[data-media]");
@@ -2890,21 +4296,33 @@
       } else if (action === "add") {
         const qty = btn.dataset.qty === undefined || btn.dataset.qty === "" ? null : Number(btn.dataset.qty);
         addToCart(btn.dataset.id, btn.dataset.color, qty);
+      } else if (action === "buy") {
+        const bought = productById(btn.dataset.id);
+        addToCart(btn.dataset.id, btn.dataset.color, bought ? offerQty(bought) : 1, { silent: true });
+        location.hash = "#/cart";
       } else if (action === "open-calc") {
         e.preventDefault();
         const tile = productById(btn.dataset.id);
         if (tile) {
+          state.calc.project = "yard";
           state.calc.productId = tile.id;
-          state.calc.colorId = tile.colors[0].id;
-          state.calc.amount = tile.defaultQty;
+          state.calc.colorId = btn.dataset.color || tile.colors[0].id;
           state.calc.borderId = borderForTile(tile).id;
           state.calc.withBase = true;
+          if (btn.dataset.kit === "yard") {
+            state.calc.yardLength = 8;
+            state.calc.yardWidth = 5;
+            state.calc.reserve = 5;
+            state.calc.pattern = "straight";
+          }
+          state.calc.amount = projectAmount(state.calc);
+          state.calc.borderMeters = projectBorderMeters(state.calc);
         }
         location.hash = "#/calc";
       } else if (action === "add-qty") {
-        const qty = Number(document.getElementById("qty").value);
-        if (!qty || qty <= 0) return;
-        addToCart(btn.dataset.id, btn.dataset.color, qty);
+        const product = productById(btn.dataset.id);
+        if (!product) return;
+        addToCart(product.id, btn.dataset.color, offerQty(product));
       } else if (action === "inc" || action === "dec") {
         const product = productById(btn.dataset.id);
         const dir = action === "inc" ? 1 : -1;
@@ -2926,6 +4344,26 @@
         });
         updateChrome(parseRoute().parts[0] || "home", parseRoute().parts);
         toast(t("calc.added"));
+      } else if (action === "compare") {
+        const id = btn.dataset.id;
+        const product = productById(id);
+        if (!product) return;
+        const index = compare.indexOf(id);
+        if (index !== -1) compare.splice(index, 1);
+        else if (compare.length >= 3) {
+          toast("В сравнении уже три позиции");
+          return;
+        } else compare.push(id);
+        saveCompare();
+        if ((parseRoute().parts[0] || "") === "compare") render({ scroll: false });
+        else paintCompare();
+      } else if (action === "compare-clear") {
+        compare = [];
+        saveCompare();
+        if ((parseRoute().parts[0] || "") === "compare") render({ scroll: false });
+        else paintCompare();
+      } else if (action === "sample") {
+        openSample(btn.dataset.id, btn.dataset.color);
       } else if (action === "fav") {
         const product = productById(btn.dataset.id);
         if (!product) return;
@@ -2967,6 +4405,9 @@
         thanks.querySelector("p").textContent = mailed
           ? t("contacts.thanksMail")
           : raw("contacts.thanksCall", { phone: SITE.phone });
+      } else if (e.target.id === "sample-form") {
+        e.preventDefault();
+        submitSample(e.target);
       } else if (e.target.id === "calc-form") {
         e.preventDefault();
       }
@@ -3006,8 +4447,16 @@
       '<div class="wrap foot-sheet"><div class="footer-grid"><div><h2>' +
       esc(t("chrome.logo")) +
       "</h2><p>" + lines("chrome.footerLead") + "</p></div>" +
-      "<div><ul><li><a href=\"#/catalog\">" + esc(t("chrome.navCatalog")) + "</a></li><li><a href=\"#/fav\">" + esc(t("chrome.navFav")) + "</a></li><li><a href=\"#/orders\">" + esc(t("chrome.navOrders")) + "</a></li><li><a href=\"#/cart\">" + esc(t("chrome.navCart")) + "</a></li><li><a href=\"#/calc\">" + esc(t("chrome.navCalc")) + "</a></li><li><a href=\"#/delivery\">" + esc(t("chrome.navDelivery")) + "</a></li><li><a href=\"#/contacts\">" + esc(t("chrome.navContacts")) + "</a></li></ul></div>" +
-      "<div><p><a data-fill-href=\"phoneHref\" href=\"" +
+      '<nav class="foot-nav" aria-label="Разделы">' +
+      '<a href="#/catalog">' + esc(t("chrome.navCatalog")) + "</a>" +
+      '<a href="#/calc">' + esc(t("chrome.navCalc")) + "</a>" +
+      '<a href="#/delivery">' + esc(t("chrome.navDelivery")) + "</a>" +
+      '<a href="#/contacts">' + esc(t("chrome.navContacts")) + "</a>" +
+      '<a href="#/fav">' + esc(t("chrome.navFav")) + "</a>" +
+      '<a href="#/orders">' + esc(t("chrome.navOrders")) + "</a>" +
+      '<a href="#/cart">' + esc(t("chrome.navCart")) + "</a>" +
+      "</nav>" +
+      '<div class="foot-contact"><p><a data-fill-href="phoneHref" href="' +
       esc(SITE.phoneHref) +
       "\"><strong data-fill=\"phone\"></strong></a><br><span data-fill=\"hours\"></span><br><span data-fill=\"address\"></span></p></div></div>" +
       '<div class="fineprint">© ' +
@@ -3021,6 +4470,10 @@
     render({ scroll: false });
   });
 
+  window.addEventListener("kd-banner", function () {
+    if (!document.body.classList.contains("is-admin")) render({ scroll: false });
+  });
+
   window.addEventListener("kd-copy", function () {
     if (!document.body.classList.contains("is-admin")) render({ scroll: false });
     else {
@@ -3032,6 +4485,7 @@
   function init() {
     cart = loadCart();
     favs = loadFavs();
+    compare = loadCompare();
     renderFooter();
     fillSite();
     hookGlobal();

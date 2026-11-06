@@ -1,12 +1,11 @@
-/* Пример админки по устройству EasyAdmin из Донснабкомплекта.
-   Вход и правки живут в этом браузере, сервера за ними нет. */
+/* Админка склада. Вход проверяет сервер, пароль в этот файл не входит. */
 (function () {
   var PRODUCT_KEY = "kd-admin-products-v1";
   var SITE_KEY = "kd-admin-site-v1";
   var COPY_KEY = "kd-admin-copy-v1";
-  var SESSION_KEY = "kd-admin-ok";
-  var DEMO_LOGIN = "admin";
-  var DEMO_PASSWORD = "sklad";
+  var BANNER_KEY = "kd-admin-banner-v1";
+  var sessionOk = false;
+  var sessionUser = null;
   var photos = {};
   var dbPromise = null;
 
@@ -28,34 +27,27 @@
     photos[id] = URL.createObjectURL(blob);
   }
 
-  function putPhoto(id, blob) {
+  function runPhotoTx(id, op, blob) {
     return openDb().then(function (database) {
       return new Promise(function (resolve, reject) {
         var tx = database.transaction("photos", "readwrite");
-        tx.objectStore("photos").put(blob, id);
+        var store = tx.objectStore("photos");
+        if (op === "put") store.put(blob, id);
+        else store.delete(id);
         tx.oncomplete = function () {
-          rememberPhoto(id, blob);
+          if (op === "put") rememberPhoto(id, blob);
+          else {
+            if (photos[id]) URL.revokeObjectURL(photos[id]);
+            delete photos[id];
+          }
           resolve();
         };
         tx.onerror = function () { reject(tx.error); };
       });
     });
   }
-
-  function deletePhoto(id) {
-    return openDb().then(function (database) {
-      return new Promise(function (resolve, reject) {
-        var tx = database.transaction("photos", "readwrite");
-        tx.objectStore("photos").delete(id);
-        tx.oncomplete = function () {
-          if (photos[id]) URL.revokeObjectURL(photos[id]);
-          delete photos[id];
-          resolve();
-        };
-        tx.onerror = function () { reject(tx.error); };
-      });
-    });
-  }
+  function putPhoto(id, blob) { return runPhotoTx(id, "put", blob); }
+  function deletePhoto(id) { return runPhotoTx(id, "delete"); }
 
   function compressPhoto(file) {
     return new Promise(function (resolve, reject) {
@@ -83,7 +75,16 @@
   }
 
   function photoSrc(id) {
-    return photos[id] || "img/" + id + ".jpg";
+    if (photos[id]) return photos[id];
+    var file = window.KD_ADMIN_FILE;
+    if (file && Array.isArray(file.photos) && file.photos.indexOf(id) !== -1) return "img/custom/" + id + ".jpg";
+    return "img/" + id + ".jpg";
+  }
+
+  function bannerSrc(slideId, productId) {
+    var key = "banner-" + slideId;
+    if (photos[key]) return photos[key];
+    return photoSrc(productId);
   }
 
   openDb().then(function (database) {
@@ -116,6 +117,67 @@
     localStorage.setItem(key, JSON.stringify(value));
   }
 
+  function stored(key, field) {
+    var local = read(key, null);
+    if (local != null) return local;
+    var file = window.KD_ADMIN_FILE;
+    if (!file || file[field] == null) return null;
+    return file[field];
+  }
+
+  function fileBase() {
+    var file = window.KD_ADMIN_FILE || {};
+    return {
+      products: file.products && typeof file.products === "object" ? file.products : {},
+      site: file.site && typeof file.site === "object" ? file.site : null,
+      copy: file.copy && typeof file.copy === "object" ? file.copy : {},
+      banner: file.banner && typeof file.banner === "object" ? file.banner : null,
+      photos: Array.isArray(file.photos) ? file.photos.slice() : [],
+    };
+  }
+
+  function publish(part) {
+    var store = fileBase();
+    if (part) Object.keys(part).forEach(function (key) { store[key] = part[key]; });
+    window.KD_ADMIN_FILE = store;
+    return fetch("/api/admin", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(store),
+    }).then(function (res) {
+      if (!res.ok) throw new Error("save");
+      return true;
+    });
+  }
+
+  function markSaved(note, ok) {
+    if (!note) return;
+    note.hidden = false;
+    note.textContent = ok
+      ? "Сохранено в файлы сайта. Обнови страницу витрины."
+      : "Сохранено только в этом браузере. Открой сайт через локальный сервер, чтобы правка попала в файлы.";
+  }
+
+  function sendPhoto(id, blob) {
+    return fetch("/api/admin-photo?id=" + encodeURIComponent(id), {
+      method: "POST",
+      headers: { "Content-Type": "image/jpeg" },
+      body: blob,
+    }).then(function (res) {
+      if (!res.ok) throw new Error("photo");
+      var photosOnDisk = fileBase().photos;
+      if (photosOnDisk.indexOf(id) === -1) photosOnDisk.push(id);
+      return publish({ photos: photosOnDisk });
+    });
+  }
+
+  function dropFilePhoto(id) {
+    return fetch("/api/admin-photo?id=" + encodeURIComponent(id), { method: "DELETE" }).then(function (res) {
+      if (!res.ok && res.status !== 404) throw new Error("photo");
+      return publish({ photos: fileBase().photos.filter(function (item) { return item !== id; }) });
+    });
+  }
+
   function esc(value) {
     return String(value == null ? "" : value)
       .replace(/&/g, "&amp;")
@@ -141,7 +203,7 @@
 
   function applyCopy() {
     var base = window.COPY_DEFAULTS || {};
-    var patch = read(COPY_KEY, {});
+    var patch = stored(COPY_KEY, "copy") || {};
     var live = {};
     Object.keys(base).forEach(function (key) { live[key] = base[key]; });
     if (patch && typeof patch === "object") {
@@ -164,7 +226,7 @@
   function applyOverrides() {
     applyCopy();
     if (!window.SITE || !window.PRODUCTS) return;
-    var site = read(SITE_KEY, null);
+    var site = stored(SITE_KEY, "site");
     if (site && typeof site === "object") {
       if (site.phone) {
         SITE.phone = site.phone;
@@ -181,7 +243,7 @@
         });
       }
     }
-    var patches = read(PRODUCT_KEY, {});
+    var patches = stored(PRODUCT_KEY, "products") || {};
     if (!patches || typeof patches !== "object") return;
     PRODUCTS.forEach(function (product) {
       var patch = patches[product.id];
@@ -202,15 +264,159 @@
     });
   }
 
+  function copyValue(key, fallback) {
+    var live = window.COPY || {};
+    return live[key] != null ? live[key] : fallback;
+  }
+
+  function defaultBanner() {
+    return {
+      slides: [
+        {
+          id: "offer",
+          type: "offer",
+          on: true,
+          kicker: copyValue("home.promoKicker", "шок-цена"),
+          title: copyValue("home.promoTitle", "самая дешевая плитка в ДНР"),
+          text: copyValue("home.promoText", "метр плиты 400 дешевле «Старого города»"),
+          btn: copyValue("home.promoBtn", "Забрать плиту"),
+          note: copyValue("home.promoNote", "выгода {gap}/м²"),
+          leftId: "plita-400",
+          rightId: "block-hollow",
+        },
+        {
+          id: "plita",
+          type: "photo",
+          on: true,
+          productId: "plita-400",
+          kicker: copyValue("home.slide2Kicker", "Плита на складе"),
+          title: copyValue("home.slide2Title", "Плита\nтротуарная"),
+          text: copyValue("home.slide2Text", "{price}/м² · {size}"),
+          btn: copyValue("home.slide2Btn", "Купить"),
+        },
+        {
+          id: "hollow",
+          type: "photo",
+          on: true,
+          productId: "block-hollow",
+          kicker: copyValue("home.slide3Kicker", "Блок на складе"),
+          title: copyValue("home.slide3Title", "Шлакоблок\nпустотелый"),
+          text: copyValue("home.slide3Text", "{price}/шт · {size}"),
+          btn: copyValue("home.slide3Btn", "Купить"),
+        },
+      ],
+    };
+  }
+
+  function bannerData() {
+    var saved = stored(BANNER_KEY, "banner");
+    if (!saved || !Array.isArray(saved.slides) || !saved.slides.length) return defaultBanner();
+    return saved;
+  }
+
+  function undoQuietBanner(banner) {
+    if (!banner || !Array.isArray(banner.slides)) return banner;
+    var quiet = false;
+    var slides = banner.slides.map(function (slide) {
+      if (!slide || slide.type !== "offer") return slide;
+      if (String(slide.kicker || "").trim() !== "Плита на складе") return slide;
+      if (String(slide.text || "") !== "{price} за 1 м²") return slide;
+      quiet = true;
+      return Object.assign({}, slide, {
+        kicker: "шок-цена",
+        title: "самая дешевая плитка в ДНР ",
+        text: "метр плиты 400 дешевле «Старого города»",
+        btn: "Забрать плиту",
+        note: "выгода {gap}/м²",
+      });
+    });
+    if (!quiet) return banner;
+    slides = slides.map(function (slide) {
+      if (!slide || slide.id !== "plita" || slide.on !== false) return slide;
+      return Object.assign({}, slide, { on: true });
+    });
+    return { slides: slides };
+  }
+
+  function applyBanner() {
+    var local = read(BANNER_KEY, null);
+    var saved = local != null ? local : stored(BANNER_KEY, "banner");
+    var restored = undoQuietBanner(saved);
+    if (restored !== saved && local != null) write(BANNER_KEY, restored);
+    window.KDBanner = restored && Array.isArray(restored.slides) && restored.slides.length ? restored : null;
+  }
+
   applyOverrides();
+  applyBanner();
+
+  var remoteLeads = null;
 
   function leads() {
+    if (remoteLeads) return remoteLeads;
     var all = read("kd-leads-v1", []);
     return Array.isArray(all) ? all : [];
   }
 
   function saveLeads(all) {
     write("kd-leads-v1", all);
+  }
+
+  function sendLead(item) {
+    return fetch("/api/leads", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify(item),
+    }).then(function (res) {
+      if (!res.ok) throw new Error("lead");
+      if (res.status === 204) return null;
+      return res.json();
+    }).then(function (saved) {
+      if (!saved || !saved.n) return;
+      if (remoteLeads) {
+        var found = false;
+        remoteLeads = remoteLeads.map(function (row) {
+          if (row && row.n === saved.n) {
+            found = true;
+            return saved;
+          }
+          return row;
+        });
+        if (!found) remoteLeads.push(saved);
+      }
+      var local = read("kd-leads-v1", []);
+      if (Array.isArray(local)) {
+        write("kd-leads-v1", local.map(function (row) {
+          return row && row.n === saved.n ? saved : row;
+        }));
+      }
+    }).catch(function () {});
+  }
+
+  function pullLeads() {
+    return fetch("/api/leads").then(function (res) {
+      if (!res.ok) throw new Error("leads");
+      return res.json();
+    }).then(function (rows) {
+      if (!Array.isArray(rows)) return;
+      var seen = {};
+      rows.forEach(function (item) {
+        if (item && item.n) seen[item.n] = true;
+      });
+      var local = read("kd-leads-v1", []);
+      var extra = [];
+      if (Array.isArray(local)) {
+        local.forEach(function (item) {
+          if (item && item.n && !seen[item.n]) {
+            rows.push(item);
+            extra.push(item);
+          }
+        });
+      }
+      remoteLeads = rows;
+      extra.forEach(sendLead);
+      if (document.body.classList.contains("is-admin")) repaint();
+    }).catch(function () {});
   }
 
   function isOrder(item) {
@@ -238,7 +444,7 @@
   }
 
   function signedIn() {
-    return sessionStorage.getItem(SESSION_KEY) === "1";
+    return sessionOk;
   }
 
   function catName(id) {
@@ -250,11 +456,130 @@
   }
 
   function setStatus(n, status) {
-    var all = leads();
-    all.forEach(function (item) {
-      if (item && item.n === n) item.status = status;
+    var item = null;
+    leads().forEach(function (row) {
+      if (row && row.n === n) {
+        row.status = status;
+        item = row;
+      }
     });
-    saveLeads(all);
+    if (!remoteLeads) {
+      saveLeads(leads());
+    } else {
+      var local = read("kd-leads-v1", []);
+      if (Array.isArray(local)) {
+        local.forEach(function (row) {
+          if (row && row.n === n) row.status = status;
+        });
+        write("kd-leads-v1", local);
+      }
+    }
+    if (item) return sendLead(item);
+    return Promise.resolve();
+  }
+
+  function mailNotes(item) {
+    var log = Array.isArray(item.mailLog) ? item.mailLog : [];
+    if (!log.length) {
+      if (item.mail) return '<p class="ea-note">Письма о статусе уйдут на ' + esc(item.mail) + ".</p>";
+      return '<p class="ea-note">У заказа нет почты, статус письмом не уйдёт.</p>';
+    }
+    return log.map(function (row) {
+      if (!row) return "";
+      if (row.ok) return '<p class="ea-note">Письмо «' + esc(row.status) + "» отправлено на " + esc(row.to || item.mail || "") + ".</p>";
+      return '<p class="ea-error">' + esc(row.status || "Письмо") + ": " + esc(row.error || "не отправлено") + "</p>";
+    }).join("");
+  }
+
+  function isAdmin() {
+    return !!(sessionUser && sessionUser.role === "admin");
+  }
+
+  function roleName(role) {
+    return role === "admin" ? "администратор" : "менеджер";
+  }
+
+  function whoAmI() {
+    if (!sessionUser) return "";
+    return '<p class="ea-who">' + esc(sessionUser.name) + "<small>" + roleName(sessionUser.role) + "</small></p>";
+  }
+
+  function accessLine() {
+    if (!sessionUser) return "";
+    if (isAdmin()) return "Вы администратор: в разделе «Люди» можно добавить менеджера.";
+    return "Вы менеджер: можно вести заказы, товары и тексты. Людей добавляет администратор.";
+  }
+
+  function staffHtml() {
+    if (!isAdmin()) {
+      return shell("staff", "Люди", '<p class="ea-lead">Раздел только для администратора. Менеджер правит каталог, заказы, тексты, баннер и контакты.</p>');
+    }
+    return shell(
+      "staff",
+      "Люди",
+      '<p class="ea-lead">Менеджеры ведут сайт: заказы, заявки, товары, тексты, баннер и контакты. Добавлять людей может только администратор. Пароль после сохранения больше не показывается.</p>' +
+      '<form class="ea-form" id="staff-create">' +
+      '<label class="ea-field">Имя<input name="name" required maxlength="80" autocomplete="off"></label>' +
+      '<label class="ea-field">Логин<input name="username" required maxlength="32" autocomplete="off"></label>' +
+      '<label class="ea-field">Пароль<input name="password" type="password" required minlength="8" maxlength="72" autocomplete="new-password"></label>' +
+      '<label class="ea-field">Роль<select name="role"><option value="manager">Менеджер</option><option value="admin">Администратор</option></select></label>' +
+      '<button class="ea-btn" type="submit">Добавить</button>' +
+      '<p class="ea-error" id="staff-error" hidden></p>' +
+      '<p class="ea-note" id="staff-saved" hidden>Человек добавлен. Передайте логин и пароль лично.</p>' +
+      "</form>" +
+      '<div class="ea-staff" id="staff-list"><p class="ea-note">Загрузка…</p></div>'
+    );
+  }
+
+  function staffTable(rows) {
+    if (!rows || !rows.length) return '<p class="ea-note">Пока никого нет.</p>';
+    var selfId = sessionUser ? sessionUser.id : 0;
+    return (
+      '<table class="ea-table"><thead><tr><th>Имя</th><th>Логин</th><th>Роль</th><th>Доступ</th><th>Новый пароль</th><th></th></tr></thead><tbody>' +
+      rows.map(function (person) {
+        var mine = person.id === selfId;
+        return (
+          '<tr data-staff-id="' + person.id + '" data-staff-login="' + esc(person.username) + '">' +
+          '<td><input name="name" value="' + esc(person.name) + '" maxlength="80" autocomplete="off"></td>' +
+          "<td>" + esc(person.username) + "</td>" +
+          '<td><select name="role"><option value="manager"' + (person.role === "manager" ? " selected" : "") + ">Менеджер</option>" +
+          '<option value="admin"' + (person.role === "admin" ? " selected" : "") + ">Администратор</option></select></td>" +
+          '<td><label class="ea-check"><input name="active" type="checkbox"' + (person.active ? " checked" : "") + (mine ? " disabled" : "") + "> работает</label></td>" +
+          '<td><input name="password" type="password" maxlength="72" autocomplete="new-password" placeholder="не менять"></td>' +
+          '<td><div class="ea-staff-actions"><button class="ea-btn" type="button" data-staff="save">Сохранить</button>' +
+          (mine ? "" : '<button class="ea-btn ea-btn-line" type="button" data-staff="delete">Удалить</button>') +
+          "</div></td></tr>"
+        );
+      }).join("") +
+      "</tbody></table>"
+    );
+  }
+
+  function staffMessage(text) {
+    var msg = String(text || "").trim();
+    if (!msg || msg === "unauthorized") return "Нужно войти заново.";
+    return msg;
+  }
+
+  function staffError(root, message) {
+    var err = root.querySelector("#staff-error");
+    if (!err) return;
+    err.hidden = !message;
+    err.textContent = message || "";
+  }
+
+  function loadStaff(root) {
+    var box = root.querySelector("#staff-list");
+    if (!box) return;
+    fetch("/api/staff", { credentials: "same-origin" }).then(function (res) {
+      if (!res.ok) return res.text().then(function (text) { throw new Error(staffMessage(text)); });
+      return res.json();
+    }).then(function (rows) {
+      if (!box.isConnected) return;
+      box.innerHTML = staffTable(rows);
+    }).catch(function (ex) {
+      if (box.isConnected) staffError(root, ex.message || "Список людей не загрузился.");
+    });
   }
 
   function menu(section) {
@@ -277,9 +602,11 @@
       item("products", "#/admin/products", "Товары", 0) +
       '<p class="ea-sec">Сайт</p>' +
       item("pages", "#/admin/pages", "Тексты страниц", 0) +
+      item("banner", "#/admin/banner", "Баннер", 0) +
       '<p class="ea-sec">Склад</p>' +
       item("settings", "#/admin/settings", "Контакты и доставка", 0) +
-      '<div class="ea-side-foot"><a href="#/">На сайт</a><br><button type="button" data-admin="logout">Выйти</button></div>' +
+      (isAdmin() ? '<p class="ea-sec">Доступ</p>' + item("staff", "#/admin/staff", "Люди", 0) : "") +
+      '<div class="ea-side-foot">' + whoAmI() + '<a href="#/">На сайт</a><br><button type="button" data-admin="logout">Выйти</button></div>' +
       "</aside>"
     );
   }
@@ -296,7 +623,7 @@
     return (
       '<form class="ea-login" id="admin-login">' +
       "<h1>Каменный двор</h1>" +
-      '<p class="ea-lead">Пример входа, как в админке Донснабкомплекта. Логин <b>admin</b>, пароль <b>sklad</b>.</p>' +
+      '<p class="ea-lead">Вход для сотрудников склада.</p>' +
       (error ? '<p class="ea-error">Неверный логин или пароль.</p>' : "") +
       '<label class="ea-field">Логин<input name="username" autocomplete="username" required></label>' +
       '<label class="ea-field">Пароль<input name="password" type="password" autocomplete="current-password" required></label>' +
@@ -308,7 +635,7 @@
   function dashboardHtml() {
     var productCount = PRODUCTS.filter(function (p) { return !p.hidden; }).length;
     var body =
-      '<p class="ea-lead">Используйте меню слева. Заказы и звонки — из этого браузера, цены правятся здесь и сразу видны в каталоге.</p>' +
+      '<p class="ea-lead">Используйте меню слева. Заказы и звонки пишутся в базу, цены правятся здесь и сразу видны в каталоге. ' + accessLine() + "</p>" +
       '<div class="ea-stats">' +
       '<a class="ea-stat" href="#/admin/orders"><b>' + freshOrders() + "</b><span>новых заказов</span></a>" +
       '<a class="ea-stat" href="#/admin/callbacks"><b>' + freshCalls() + "</b><span>звонков без ответа</span></a>" +
@@ -334,14 +661,14 @@
       return (
         "<tr><td><a href=\"#/admin/orders/" + encodeURIComponent(item.n) + "\">" + esc(item.n) + "</a></td>" +
         "<td>" + esc(when(item.at)) + "</td>" +
-        "<td>" + esc(item.name) + "<br>" + esc(item.phone) + "</td>" +
+        "<td>" + esc(item.name) + "<br>" + esc(item.phone) + (item.mail ? "<br>" + esc(item.mail) : "") + "</td>" +
         "<td>" + esc(item.summary || "") + "</td>" +
         "<td>" + (item.total != null ? money(item.total) : "") + "</td>" +
         "<td>" + statusSelect(item, ["Принят", "Собран", "Отгружен", "Отменён"]) + "</td></tr>"
       );
     }).join("");
     var body =
-      '<p class="ea-lead">Заказы из корзины на этом компьютере.</p>' +
+      '<p class="ea-lead">Заказы из корзины. Статусы «Принят», «Собран» и «Отгружен» уходят письмом на почту клиента.</p>' +
       (rows
         ? '<div class="ea-card"><table class="ea-table"><thead><tr><th>Номер</th><th>Когда</th><th>Клиент</th><th>Состав</th><th>Сумма</th><th>Статус</th></tr></thead><tbody>' + rows + "</tbody></table></div>"
         : '<p class="ea-note">Заказов пока нет.</p>');
@@ -360,8 +687,9 @@
       : "<p>" + esc(item.summary || "") + "</p>";
     var body =
       '<a class="ea-back" href="#/admin/orders">К списку</a>' +
-      '<p class="ea-lead">' + esc([when(item.at), item.name, item.phone].filter(Boolean).join(" · ")) + "</p>" +
+      '<p class="ea-lead">' + esc([when(item.at), item.name, item.phone, item.mail].filter(Boolean).join(" · ")) + "</p>" +
       '<p class="ea-field">Статус ' + statusSelect(item, ["Принят", "Собран", "Отгружен", "Отменён"]) + "</p>" +
+      mailNotes(item) +
       lines +
       (item.total != null ? "<p><b>" + money(item.total) + "</b></p>" : "") +
       (item.comment ? "<p>" + esc(item.comment) + "</p>" : "");
@@ -519,6 +847,72 @@
     return shell("pages", page.title, body);
   }
 
+  function productOptions(selected) {
+    return PRODUCTS.map(function (product) {
+      return '<option value="' + esc(product.id) + '"' + (product.id === selected ? " selected" : "") + ">" + esc(product.name) + "</option>";
+    }).join("");
+  }
+
+  function bannerHtml() {
+    var data = bannerData();
+    var cards = data.slides.map(function (slide, index) {
+      var last = index === data.slides.length - 1;
+      var tools =
+        '<div class="ea-banner-tools">' +
+        '<button class="ea-btn ea-btn-line" type="button" data-banner="up" data-id="' + esc(slide.id) + '"' + (index === 0 ? " disabled" : "") + ">Выше</button>" +
+        '<button class="ea-btn ea-btn-line" type="button" data-banner="down" data-id="' + esc(slide.id) + '"' + (last ? " disabled" : "") + ">Ниже</button>" +
+        (slide.type === "photo"
+          ? '<button class="ea-btn ea-btn-line" type="button" data-banner="remove" data-id="' + esc(slide.id) + '">Убрать кадр</button>'
+          : "") +
+        "</div>";
+      var show =
+        '<label class="ea-check"><input type="checkbox" name="on-' + esc(slide.id) + '"' + (slide.on === false ? "" : " checked") + "> Показывать на сайте</label>";
+      var texts =
+        '<input type="hidden" name="type-' + esc(slide.id) + '" value="' + esc(slide.type) + '">' +
+        '<label class="ea-field">Строка сверху<input name="kicker-' + esc(slide.id) + '" value="' + esc(slide.kicker || "") + '"></label>' +
+        '<label class="ea-field">Заголовок. Новая строка — новый ряд<textarea name="title-' + esc(slide.id) + '" rows="3">' + esc(slide.title || "") + "</textarea></label>" +
+        '<label class="ea-field">Текст<textarea name="text-' + esc(slide.id) + '" rows="3">' + esc(slide.text || "") + "</textarea></label>" +
+        '<label class="ea-field">Кнопка<input name="btn-' + esc(slide.id) + '" value="' + esc(slide.btn || "") + '"></label>';
+      var extra = "";
+      if (slide.type === "offer") {
+        extra =
+          '<p class="ea-note">На кадре плита 400 и «Старый город». В бирке {gap} — разница их цен.</p>' +
+          '<label class="ea-field">Бирка выгоды<input name="note-' + esc(slide.id) + '" value="' + esc(slide.note || "") + '"></label>';
+      } else {
+        var custom = !!photos["banner-" + slide.id];
+        extra =
+          '<p class="ea-note">В тексте можно писать {price} и {size} — цена и размер выбранного товара.</p>' +
+          '<label class="ea-field">Товар на кадре<select name="product-' + esc(slide.id) + '">' + productOptions(slide.productId) + "</select></label>" +
+          '<img class="ea-photo" data-banner-preview="' + esc(slide.id) + '" src="' + esc(bannerSrc(slide.id, slide.productId)) + '" alt="">' +
+          '<label class="ea-field">Своё фото для этого кадра<input type="file" name="photo-' + esc(slide.id) + '" accept="image/*"></label>' +
+          (custom
+            ? '<label class="ea-check"><input type="checkbox" name="drop-' + esc(slide.id) + '"> Убрать своё фото и вернуть снимок товара</label>'
+            : "");
+      }
+      return (
+        '<fieldset class="ea-banner"><legend>' +
+        (slide.type === "offer" ? "Кадр со склада" : "Кадр " + (index + 1)) +
+        "</legend>" +
+        show +
+        texts +
+        extra +
+        tools +
+        "</fieldset>"
+      );
+    }).join("");
+    var body =
+      '<p class="ea-lead">Кадры плашки на главной. Первый сравнивает плиту 400 со «Старым городом», остальные — фото. Всё хранится в этом браузере.</p>' +
+      '<form class="ea-form ea-form-wide" id="admin-banner" data-ids="' + esc(data.slides.map(function (slide) { return slide.id; }).join(",")) + '">' +
+      cards +
+      '<div class="ea-actions"><button class="ea-btn" type="submit">Сохранить</button>' +
+      '<button class="ea-btn ea-btn-line" type="button" data-banner="add">Добавить кадр</button>' +
+      '<button class="ea-btn ea-btn-line" type="button" data-banner="reset">Вернуть исходные кадры</button></div>' +
+      '<p class="ea-error" id="admin-photo-error" hidden>Фото не прочиталось. Выберите другой файл.</p>' +
+      '<p class="ea-note" id="admin-saved" hidden>Сохранено. На главной уже новый баннер.</p>' +
+      "</form>";
+    return shell("banner", "Баннер", body);
+  }
+
   function html(parts) {
     if (!signedIn()) return loginHtml(false);
     var section = parts[1] || "dashboard";
@@ -529,7 +923,9 @@
     if (section === "products") return productsHtml();
     if (section === "pages" && parts[2]) return pageCopyHtml(parts[2]);
     if (section === "pages") return pagesHtml();
+    if (section === "banner") return bannerHtml();
     if (section === "settings") return settingsHtml();
+    if (section === "staff") return staffHtml();
     return dashboardHtml();
   }
 
@@ -548,28 +944,144 @@
     if (login) {
       login.addEventListener("submit", function (e) {
         e.preventDefault();
-        var ok = login.username.value.trim() === DEMO_LOGIN && login.password.value === DEMO_PASSWORD;
-        if (!ok) {
+        var button = login.querySelector("button");
+        if (button) button.disabled = true;
+        fetch("/api/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "same-origin",
+          body: JSON.stringify({
+            username: login.username.value.trim(),
+            password: login.password.value,
+          }),
+        }).then(function (res) {
+          if (!res.ok) {
+            root.innerHTML = loginHtml(true);
+            hook(root);
+            return null;
+          }
+          return res.json();
+        }).then(function (user) {
+          if (!user) return;
+          sessionOk = true;
+          sessionUser = user;
+          pullLeads();
+          if (location.hash !== "#/admin") location.hash = "#/admin";
+          else repaint();
+        }).catch(function () {
           root.innerHTML = loginHtml(true);
           hook(root);
-          return;
-        }
-        sessionStorage.setItem(SESSION_KEY, "1");
-        if (location.hash !== "#/admin") location.hash = "#/admin";
-        else repaint();
+        });
       });
     }
     var logout = root.querySelector("[data-admin=logout]");
     if (logout) {
       logout.addEventListener("click", function () {
-        sessionStorage.removeItem(SESSION_KEY);
-        repaint();
+        fetch("/api/logout", { method: "POST", credentials: "same-origin" }).finally(function () {
+          sessionOk = false;
+          sessionUser = null;
+          remoteLeads = null;
+          repaint();
+        });
+      });
+    }
+    var staffCreate = root.querySelector("#staff-create");
+    if (staffCreate) {
+      loadStaff(root);
+      staffCreate.addEventListener("submit", function (e) {
+        e.preventDefault();
+        var button = staffCreate.querySelector("button");
+        if (button) button.disabled = true;
+        staffError(root, "");
+        var saved = root.querySelector("#staff-saved");
+        if (saved) saved.hidden = true;
+        fetch("/api/staff", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: staffCreate.name.value.trim(),
+            username: staffCreate.username.value.trim(),
+            password: staffCreate.password.value,
+            role: staffCreate.role.value,
+          }),
+        }).then(function (res) {
+          if (!res.ok) return res.text().then(function (text) { throw new Error(staffMessage(text)); });
+          staffCreate.name.value = "";
+          staffCreate.username.value = "";
+          staffCreate.password.value = "";
+          if (saved) {
+            saved.hidden = false;
+            saved.textContent = "Человек добавлен. Передайте логин и пароль лично.";
+          }
+          loadStaff(root);
+        }).catch(function (ex) {
+          staffError(root, ex.message);
+        }).then(function () {
+          if (button) button.disabled = false;
+        });
+      });
+    }
+    var staffList = root.querySelector("#staff-list");
+    if (staffList) {
+      staffList.addEventListener("click", function (e) {
+        var btn = e.target.closest("[data-staff]");
+        if (!btn) return;
+        var tr = btn.closest("tr");
+        if (!tr) return;
+        var id = tr.getAttribute("data-staff-id");
+        staffError(root, "");
+        if (btn.getAttribute("data-staff") === "delete") {
+          var loginName = tr.getAttribute("data-staff-login") || "этого человека";
+          if (!window.confirm("Удалить «" + loginName + "»? Вход под этим логином перестанет работать.")) return;
+          fetch("/api/staff?id=" + encodeURIComponent(id), { method: "DELETE", credentials: "same-origin" }).then(function (res) {
+            if (!res.ok) return res.text().then(function (text) { throw new Error(staffMessage(text)); });
+            loadStaff(root);
+          }).catch(function (ex) {
+            staffError(root, ex.message);
+          });
+          return;
+        }
+        var active = tr.querySelector("[name=active]");
+        var nextName = tr.querySelector("[name=name]").value.trim();
+        var nextRole = tr.querySelector("[name=role]").value;
+        fetch("/api/staff?id=" + encodeURIComponent(id), {
+          method: "PUT",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: nextName,
+            role: nextRole,
+            active: !!(active && active.checked),
+            password: tr.querySelector("[name=password]").value,
+          }),
+        }).then(function (res) {
+          if (!res.ok) return res.text().then(function (text) { throw new Error(staffMessage(text)); });
+          tr.querySelector("[name=password]").value = "";
+          if (sessionUser && String(sessionUser.id) === String(id)) {
+            sessionUser.name = nextName;
+            sessionUser.role = nextRole;
+            if (nextRole !== "admin") {
+              if (location.hash !== "#/admin") location.hash = "#/admin";
+              else repaint();
+              return;
+            }
+            var who = root.querySelector(".ea-who");
+            if (who) who.innerHTML = esc(nextName) + "<small>" + roleName(nextRole) + "</small>";
+          }
+          var saved = root.querySelector("#staff-saved");
+          if (saved) {
+            saved.hidden = false;
+            saved.textContent = "Сохранено.";
+          }
+        }).catch(function (ex) {
+          staffError(root, ex.message);
+        });
       });
     }
     root.querySelectorAll("[data-admin=status]").forEach(function (sel) {
       sel.addEventListener("change", function () {
-        setStatus(sel.dataset.lead, sel.value);
-        repaint();
+        setStatus(sel.dataset.lead, sel.value).then(function () { repaint(); });
       });
     });
     var q = root.querySelector("#admin-q");
@@ -604,10 +1116,12 @@
         if (button) button.disabled = true;
         if (fail) fail.hidden = true;
         var photoJob = Promise.resolve();
-        if (file) photoJob = compressPhoto(file).then(function (blob) { return putPhoto(id, blob); });
-        else if (drop) photoJob = deletePhoto(id);
+        if (file) photoJob = compressPhoto(file).then(function (blob) {
+          return putPhoto(id, blob).then(function () { return sendPhoto(id, blob); });
+        });
+        else if (drop) photoJob = deletePhoto(id).then(function () { return dropFilePhoto(id); });
         photoJob.then(function () {
-          var patches = read(PRODUCT_KEY, {});
+          var patches = stored(PRODUCT_KEY, "products") || {};
           if (!patches || typeof patches !== "object") patches = {};
           patches[id] = {
             name: fields.name.value.trim(),
@@ -635,14 +1149,13 @@
           write(PRODUCT_KEY, patches);
           applyOverrides();
           if (button) button.disabled = false;
-          if (file || drop) {
-            repaint();
-            var again = document.getElementById("admin-saved");
-            if (again) again.hidden = false;
-          } else {
-            var note = document.getElementById("admin-saved");
-            if (note) note.hidden = false;
-          }
+          publish({ products: patches }).then(function () {
+            if (file || drop) repaint();
+            markSaved(document.getElementById("admin-saved"), true);
+          }, function () {
+            if (file || drop) repaint();
+            markSaved(document.getElementById("admin-saved"), false);
+          });
         }).catch(function () {
           if (button) button.disabled = false;
           if (fail) fail.hidden = false;
@@ -653,18 +1166,21 @@
     if (siteForm) {
       siteForm.addEventListener("submit", function (e) {
         e.preventDefault();
-        var stored = read(SITE_KEY, {}) || {};
+        var saved = stored(SITE_KEY, "site") || {};
         var fields = siteForm.elements;
-        stored.phone = fields.phone.value.trim();
-        stored.hours = fields.hours.value.trim();
-        stored.address = fields.address.value.trim();
-        stored.delivery = stored.delivery || {};
-        stored.delivery.city = Number(String(fields.city.value).replace(",", ".")) || 0;
-        stored.delivery.near = Number(String(fields.near.value).replace(",", ".")) || 0;
-        write(SITE_KEY, stored);
+        saved.phone = fields.phone.value.trim();
+        saved.hours = fields.hours.value.trim();
+        saved.address = fields.address.value.trim();
+        saved.delivery = saved.delivery || {};
+        saved.delivery.city = Number(String(fields.city.value).replace(",", ".")) || 0;
+        saved.delivery.near = Number(String(fields.near.value).replace(",", ".")) || 0;
+        write(SITE_KEY, saved);
         applyOverrides();
-        var note = document.getElementById("admin-saved");
-        if (note) note.hidden = false;
+        publish({ site: saved }).then(function () {
+          markSaved(document.getElementById("admin-saved"), true);
+        }, function () {
+          markSaved(document.getElementById("admin-saved"), false);
+        });
       });
     }
     var copyForm = root.querySelector("#admin-copy");
@@ -681,7 +1197,7 @@
       copyForm.addEventListener("submit", function (e) {
         e.preventDefault();
         var page = copyPage(copyForm.dataset.page);
-        var patch = read(COPY_KEY, {}) || {};
+        var patch = stored(COPY_KEY, "copy") || {};
         if (!page) return;
         page.fields.forEach(function (field) {
           var key = field[0];
@@ -694,24 +1210,172 @@
         write(COPY_KEY, patch);
         applyCopy();
         window.dispatchEvent(new Event("kd-copy"));
-        var note = document.getElementById("admin-saved");
-        if (note) note.hidden = false;
+        publish({ copy: patch }).then(function () {
+          markSaved(document.getElementById("admin-saved"), true);
+        }, function () {
+          markSaved(document.getElementById("admin-saved"), false);
+        });
       });
       var reset = root.querySelector("[data-admin=reset-copy]");
       if (reset) {
         reset.addEventListener("click", function () {
           var page = copyPage(copyForm.dataset.page);
-          var patch = read(COPY_KEY, {}) || {};
+          var patch = stored(COPY_KEY, "copy") || {};
           if (!page) return;
           page.fields.forEach(function (field) { delete patch[field[0]]; });
           write(COPY_KEY, patch);
           applyCopy();
           window.dispatchEvent(new Event("kd-copy"));
-          repaint();
+          publish({ copy: patch }).then(function () { repaint(); });
         });
       }
     }
+    var bannerForm = root.querySelector("#admin-banner");
+    if (bannerForm) {
+      bannerForm.querySelectorAll("input[type=file]").forEach(function (input) {
+        input.addEventListener("change", function () {
+          var file = input.files && input.files[0];
+          var id = input.name.replace(/^photo-/, "");
+          var preview = bannerForm.querySelector('[data-banner-preview="' + id + '"]');
+          if (!file || !preview) return;
+          preview.src = URL.createObjectURL(file);
+        });
+      });
+      bannerForm.addEventListener("submit", function (e) {
+        e.preventDefault();
+        var fields = bannerForm.elements;
+        var slides = slidesFromBannerForm(bannerForm);
+        var button = bannerForm.querySelector("button[type=submit]");
+        var fail = bannerForm.querySelector("#admin-photo-error");
+        if (button) button.disabled = true;
+        if (fail) fail.hidden = true;
+        Promise.all(slides.map(function (slide) {
+          if (slide.type !== "photo") return Promise.resolve();
+          var fileInput = fields["photo-" + slide.id];
+          var file = fileInput && fileInput.files && fileInput.files[0];
+          var dropInput = fields["drop-" + slide.id];
+          var drop = dropInput && dropInput.checked && !file;
+          if (file) return compressPhoto(file).then(function (blob) { return putPhoto("banner-" + slide.id, blob); });
+          if (drop) return deletePhoto("banner-" + slide.id);
+          return Promise.resolve();
+        })).then(function () {
+          saveBannerSlides(slides);
+          if (button) button.disabled = false;
+          repaint();
+          var note = document.getElementById("admin-saved");
+          if (note) note.hidden = false;
+        }).catch(function () {
+          if (button) button.disabled = false;
+          if (fail) fail.hidden = false;
+        });
+      });
+      bannerForm.addEventListener("click", function (e) {
+        var btn = e.target.closest("[data-banner]");
+        if (!btn || btn.type === "submit") return;
+        var action = btn.dataset.banner;
+        var slides = slidesFromBannerForm(bannerForm);
+        if (action === "add") {
+          var first = PRODUCTS[0];
+          slides.push({
+            id: "b" + Date.now().toString(36),
+            type: "photo",
+            on: true,
+            productId: first ? first.id : "",
+            kicker: "На складе",
+            title: first ? first.name : "",
+            text: "{price} · {size}",
+            btn: "Открыть",
+          });
+          saveBannerSlides(slides);
+          repaint();
+          return;
+        }
+        if (action === "reset") {
+          var jobs = slides.filter(function (slide) { return slide.type === "photo"; }).map(function (slide) {
+            return photos["banner-" + slide.id] ? deletePhoto("banner-" + slide.id) : Promise.resolve();
+          });
+          Promise.all(jobs).then(function () {
+            localStorage.removeItem(BANNER_KEY);
+            publish({ banner: null });
+            applyBanner();
+            window.dispatchEvent(new Event("kd-banner"));
+            repaint();
+          });
+          return;
+        }
+        var index = slides.findIndex(function (slide) { return slide.id === btn.dataset.id; });
+        if (index < 0) return;
+        if (action === "remove" && slides[index].type === "photo") {
+          var gone = slides[index];
+          slides.splice(index, 1);
+          var wipe = photos["banner-" + gone.id] ? deletePhoto("banner-" + gone.id) : Promise.resolve();
+          wipe.then(function () {
+            saveBannerSlides(slides);
+            repaint();
+          });
+          return;
+        }
+        if (action === "up" && index > 0) {
+          var prev = slides[index - 1];
+          slides[index - 1] = slides[index];
+          slides[index] = prev;
+        } else if (action === "down" && index < slides.length - 1) {
+          var next = slides[index + 1];
+          slides[index + 1] = slides[index];
+          slides[index] = next;
+        } else return;
+        saveBannerSlides(slides);
+        repaint();
+      });
+    }
   }
 
-  window.KDAdmin = { html: html, hook: hook, photoSrc: photoSrc };
+  function slidesFromBannerForm(form) {
+    var ids = String(form.dataset.ids || "").split(",").filter(Boolean);
+    var fields = form.elements;
+    return ids.map(function (id) {
+      var type = fields["type-" + id] ? fields["type-" + id].value : "photo";
+      var slide = {
+        id: id,
+        type: type,
+        on: !!(fields["on-" + id] && fields["on-" + id].checked),
+        kicker: fields["kicker-" + id] ? fields["kicker-" + id].value : "",
+        title: fields["title-" + id] ? fields["title-" + id].value : "",
+        text: fields["text-" + id] ? fields["text-" + id].value : "",
+        btn: fields["btn-" + id] ? fields["btn-" + id].value : "",
+      };
+      if (type === "offer") {
+        slide.note = fields["note-" + id] ? fields["note-" + id].value : "";
+        slide.leftId = fields["left-" + id] ? fields["left-" + id].value : "";
+        slide.rightId = fields["right-" + id] ? fields["right-" + id].value : "";
+      } else {
+        slide.productId = fields["product-" + id] ? fields["product-" + id].value : "";
+      }
+      return slide;
+    });
+  }
+
+  function saveBannerSlides(slides) {
+    var banner = { slides: slides };
+    write(BANNER_KEY, banner);
+    publish({ banner: banner });
+    applyBanner();
+    window.dispatchEvent(new Event("kd-banner"));
+  }
+
+  window.KDAdmin = { html: html, hook: hook, photoSrc: photoSrc, bannerSrc: bannerSrc };
+  fetch("/api/session", { credentials: "same-origin" }).then(function (res) {
+    if (!res.ok) {
+      sessionOk = false;
+      sessionUser = null;
+      if (document.body.classList.contains("is-admin")) repaint();
+      return;
+    }
+    return res.json().then(function (user) {
+      sessionOk = true;
+      sessionUser = user;
+      pullLeads();
+      if (document.body.classList.contains("is-admin")) repaint();
+    });
+  }).catch(function () {});
 })();

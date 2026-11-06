@@ -1,0 +1,7 @@
+[Unit]
+Description=Kamenniy Dvor backup job
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/kamenniy-dvor
+ExecStart=/usr/bin/pwsh -File /opt/kamenniy-dvor/deploy/backup.ps1

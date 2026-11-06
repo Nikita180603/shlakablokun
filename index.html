@@ -5,14 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
   <meta name="theme-color" content="#1b1916">
+  <script>
+    try {
+      if (localStorage.getItem("kd-theme") === "dark") document.documentElement.dataset.theme = "dark";
+    } catch (e) {}
+  </script>
   <title>Каменный двор — плитка и шлакоблок</title>
   <meta name="description" content="Тротуарная плитка, шлакоблок и бордюр со склада. Каталог, калькулятор площади, избранное и корзина.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect fill='%23f4efe7' width='32' height='32'/%3E%3Crect x='4' y='6' width='11' height='8' fill='%239d3b32'/%3E%3Crect x='17' y='6' width='11' height='8' fill='%238d8d86'/%3E%3Crect x='4' y='17' width='11' height='8' fill='%236d4b34'/%3E%3Crect x='17' y='17' width='11' height='8' fill='%233e4246'/%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&family=Onest:wght@500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/styles.css">
-  <link rel="stylesheet" href="css/admin.css">
+  <link rel="stylesheet" href="css/styles.css?v=20261105-order-flow">
+  <link rel="stylesheet" href="css/admin.css?v=20261030-staff">
 </head>
 <body>
   <a class="skip" href="#view" data-t="chrome.skip">К содержимому</a>
@@ -30,7 +35,18 @@
       </a>
       <button class="burger" type="button" data-t-aria="chrome.menu" aria-label="Меню" aria-expanded="false" data-action="menu"><span></span><span></span></button>
       <nav class="nav" id="nav">
-        <a href="#/catalog" data-page="catalog" data-t="chrome.navCatalog">Каталог</a>
+        <div class="nav-catalog">
+          <a href="#/catalog?cat=all" data-page="catalog" data-t="chrome.navCatalog" aria-haspopup="true">Каталог</a>
+          <div class="catalog-menu" aria-label="Категории каталога">
+            <div class="catalog-menu-grid">
+              <a href="#/catalog?cat=tile"><span class="catalog-menu-icon"><svg viewBox="0 0 48 48" aria-hidden="true"><path d="m8 17 15-7 17 8-16 8z"/><path d="m8 17v9l16 9 16-8v-9"/><path d="m16 13 16 8v10M24 26v9"/></svg></span><span><strong>Тротуарная плитка</strong><small>Двор и дорожки</small></span></a>
+              <a href="#/catalog?cat=block"><span class="catalog-menu-icon"><svg viewBox="0 0 48 48" aria-hidden="true"><path d="M7 14h34v22H7z"/><path d="M13 20h8v10h-8zM27 20h8v10h-8z"/></svg></span><span><strong>Шлакоблок</strong><small>Стены и гаражи</small></span></a>
+              <a href="#/catalog?cat=border"><span class="catalog-menu-icon"><svg viewBox="0 0 48 48" aria-hidden="true"><path d="M5 19h38v15H5z"/><path d="M18 19v15M31 19v15"/><path d="m5 19 6-5h32v5"/></svg></span><span><strong>Бордюр</strong><small>Край мощения</small></span></a>
+              <a href="#/catalog?cat=bulk"><span class="catalog-menu-icon"><svg viewBox="0 0 48 48" aria-hidden="true"><path d="M7 35c5-3 8-17 17-22 8 5 11 19 17 22z"/><path d="M15 35h18M20 25h.1M28 29h.1M25 20h.1"/></svg></span><span><strong>Песок и щебень</strong><small>Основание</small></span></a>
+            </div>
+            <a class="catalog-menu-all" href="#/catalog?cat=all">Весь каталог</a>
+          </div>
+        </div>
         <a href="#/calc" data-page="calc" data-t="chrome.navCalc">Калькулятор</a>
         <a href="#/delivery" data-page="delivery" data-t="chrome.navDelivery">Доставка</a>
         <a href="#/contacts" data-page="contacts" data-t="chrome.navContacts">Контакты</a>
@@ -43,6 +59,7 @@
           <strong data-fill="phone">+7 (900) 123-45-67</strong>
         </a>
         <button type="button" class="btn btn-line paper-line callback-btn" data-action="callback" data-t="chrome.navCallShort">Звонок</button>
+        <button type="button" class="theme-toggle" data-action="theme" aria-pressed="false" aria-label="Тёмная тема"><span class="theme-toggle-ico" aria-hidden="true"></span></button>
         <nav class="account" data-t-aria="chrome.account" aria-label="Покупки">
           <a class="cart-link" href="#/fav" data-page="fav">
             <span class="tool-mark">
@@ -90,10 +107,34 @@
       </div>
     </div>
   </div>
+  <div class="modal" id="sample" hidden>
+    <div class="modal-bg" data-action="close-modal"></div>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="sample-title">
+      <button type="button" class="modal-close" data-action="close-modal" aria-label="Закрыть">×</button>
+      <h2 id="sample-title">Привезти образцы</h2>
+      <p class="note" id="sample-hint">Можно выбрать до трёх позиций.</p>
+      <form id="sample-form">
+        <label class="field"><span>Имя</span><input name="name" autocomplete="name"></label>
+        <label class="field"><span>Телефон</span><input name="phone" autocomplete="tel" inputmode="tel"></label>
+        <label class="field"><span>Образец 1</span><select id="sample-1" name="s1"></select></label>
+        <label class="field"><span>Образец 2</span><select id="sample-2" name="s2"></select></label>
+        <label class="field"><span>Образец 3</span><select id="sample-3" name="s3"></select></label>
+        <label class="field"><span>Комментарий</span><input name="comment" placeholder="Куда привезти и когда удобно"></label>
+        <input type="hidden" name="colorNote" id="sample-color-note">
+        <p class="form-error" hidden></p>
+        <button class="btn" type="submit">Жду образцы</button>
+      </form>
+      <div id="sample-thanks" hidden>
+        <p></p>
+        <button type="button" class="btn btn-ink" data-action="close-modal">Закрыть</button>
+      </div>
+    </div>
+  </div>
   <noscript><p class="wrap">Включите JavaScript: каталог собирается в браузере.</p></noscript>
   <script src="js/data.js"></script>
-  <script src="js/copy.js"></script>
-  <script src="js/admin.js"></script>
-  <script src="js/app.js"></script>
+  <script src="js/copy.js?v=20261105-cart-email"></script>
+  <script src="data/admin.js?v=20261102-shock-back"></script>
+  <script src="js/admin.js?v=20261105-order-flow"></script>
+  <script src="js/app.js?v=20261105-order-flow"></script>
 </body>
 </html>

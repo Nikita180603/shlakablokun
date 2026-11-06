@@ -1,0 +1,16 @@
+[Unit]
+Description=Kamenniy Dvor site server
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/kamenniy-dvor
+EnvironmentFile=/opt/kamenniy-dvor/.env
+ExecStart=/opt/kamenniy-dvor/kd-server
+Restart=on-failure
+RestartSec=5
+User=www-data
+Group=www-data
+
+[Install]
+WantedBy=multi-user.target

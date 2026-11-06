@@ -1,0 +1,44 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:4173:4173"
+    volumes:
+      - ./data:/app/data
+    environment:
+      KD_ADDR: 0.0.0.0:4173
+      # KD_ADMIN_USER: admin
+      # KD_ADMIN_PASSWORD: change-me
+      # KD_SMTP_HOST: smtp.example.com
+      # KD_SMTP_PORT: "587"
+      # KD_SMTP_USER: no-reply@example.com
+      # KD_SMTP_PASSWORD: secret
+      # KD_SMTP_FROM: no-reply@example.com
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3001:3001"
+    volumes:
+      - uptime_kuma_data:/app/data
+    depends_on:
+      app:
+        condition: service_healthy
+
+volumes:
+  caddy_data:
+  caddy_config:
+  uptime_kuma_data:

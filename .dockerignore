@@ -1,0 +1,16 @@
+.git
+.gitignore
+.env
+.env.*
+data
+kd-server.exe
+kd-server-linux
+*.log
+*.tmp
+*.bak
+backups
+node_modules
+.DS_Store
+Thumbs.db
+.vscode
+.idea

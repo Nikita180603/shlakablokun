@@ -184,6 +184,18 @@ body.is-admin .toast { display: none; }
   background: #e6dfd2;
 }
 .ea-field input[type="file"] { padding: 8px 0; border: 0; }
+.ea-banner {
+  display: grid;
+  gap: 10px;
+  margin: 0 0 14px;
+  padding: 14px 16px 16px;
+  border: 1px solid #e6e2dc;
+  border-radius: 16px;
+  background: #fff;
+}
+.ea-banner legend { padding: 0 6px; font-weight: 800; }
+.ea-banner-tools { display: flex; flex-wrap: wrap; gap: 8px; }
+.ea-banner-tools button:disabled { opacity: 0.4; cursor: default; }
 
 .ea-btn {
   border: 0;
@@ -206,6 +218,21 @@ body.is-admin .toast { display: none; }
   font-weight: 700;
 }
 .ea-note { color: #6b6560; font-size: 13px; }
+.ea-who { margin: 0 0 8px; font-weight: 800; line-height: 1.3; }
+.ea-who small { display: block; color: #6b6560; font-weight: 700; }
+.ea-staff { overflow-x: auto; margin-top: 18px; }
+.ea-staff .ea-table { min-width: 760px; }
+.ea-table input,
+.ea-table select {
+  width: 100%;
+  border: 1px solid #ddd4c6;
+  border-radius: 8px;
+  background: #fff;
+  padding: 8px 10px;
+}
+.ea-table input[type="checkbox"] { width: auto; }
+.ea-staff-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.ea-staff-actions .ea-btn { padding: 8px 10px; }
 .ea-back { display: inline-block; margin-bottom: 10px; font-weight: 800; }
 
 .ea-login {

@@ -1,0 +1,30 @@
+# База содержит заказы, заявки и отпечаток пароля администратора.
+data/shop.db
+data/shop.db-shm
+data/shop.db-wal
+data/shop.db-journal
+
+# Локально собранный сервер.
+kd-server.exe
+*.exe
+
+# Секреты окружения нельзя хранить в Git.
+.env
+.env.*
+!.env.example
+
+# Локальные журналы и временные файлы.
+*.log
+*.tmp
+*.bak
+
+# Служебные файлы ОС и редакторов.
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ������ � ��������� (�� ���������)
+data/
+kd-server*
+
