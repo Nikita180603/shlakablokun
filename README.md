@@ -48,13 +48,20 @@ go run ./cmd/server
 
 ## Деплой
 
-### Docker
+### Docker + HTTPS
 
-```bash
+1. Скопируйте `.env.example` в `.env` и укажите `KD_DOMAIN` (ваш домен).
+2. В DNS создайте записи `A` (и при желании `AAAA`) для домена и `www` на IP сервера.
+3. Откройте снаружи порты **80** и **443**.
+4. Запуск:
+
+```powershell
 docker compose up -d --build
 ```
 
-Сервис слушает порт `4173` внутри контейнера; для продакшена используйте reverse proxy (Caddy/Nginx) с HTTPS — см. `Caddyfile`.
+Caddy сам получит сертификат Let's Encrypt. Сайт: `https://ваш-домен`.  
+Локально без домена по-прежнему: `docker compose up -d --build app` → http://127.0.0.1:4173/  
+Мониторинг (опционально): `docker compose --profile monitor up -d`
 
 ### systemd (Linux)
 

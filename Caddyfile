@@ -1,5 +1,19 @@
-# Замените example.com на ваш домен.
-example.com {
-    reverse_proxy app:4173
-    encode gzip zstd
+# Домен берётся из KD_DOMAIN в .env / docker compose.
+# Caddy сам получит сертификат Let's Encrypt, если:
+# 1) A/AAAA запись домена смотрит на этот сервер
+# 2) порты 80 и 443 открыты снаружи
+
+{$KD_DOMAIN} {
+	encode gzip zstd
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+	reverse_proxy app:4173
+}
+
+www.{$KD_DOMAIN} {
+	redir https://{$KD_DOMAIN}{uri} permanent
 }

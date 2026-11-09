@@ -8,25 +8,36 @@ services:
       - ./data:/app/data
     environment:
       KD_ADDR: 0.0.0.0:4173
-      # KD_ADMIN_USER: admin
-      # KD_ADMIN_PASSWORD: change-me
-      # KD_SMTP_HOST: smtp.example.com
-      # KD_SMTP_PORT: "587"
-      # KD_SMTP_USER: no-reply@example.com
-      # KD_SMTP_PASSWORD: secret
-      # KD_SMTP_FROM: no-reply@example.com
+      KD_ADMIN_USER: ${KD_ADMIN_USER:-}
+      KD_ADMIN_PASSWORD: ${KD_ADMIN_PASSWORD:-}
+      KD_SMTP_HOST: ${KD_SMTP_HOST:-}
+      KD_SMTP_PORT: ${KD_SMTP_PORT:-587}
+      KD_SMTP_USER: ${KD_SMTP_USER:-}
+      KD_SMTP_PASSWORD: ${KD_SMTP_PASSWORD:-}
+      KD_SMTP_FROM: ${KD_SMTP_FROM:-}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4173/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
     ports:
       - "80:80"
       - "443:443"
+    environment:
+      KD_DOMAIN: ${KD_DOMAIN:?Укажите KD_DOMAIN в .env — например shop.example.com}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
-      - app
+      app:
+        condition: service_healthy
+
   uptime-kuma:
     image: louislam/uptime-kuma:1
     restart: unless-stopped
@@ -34,6 +45,8 @@ services:
       - "127.0.0.1:3001:3001"
     volumes:
       - uptime_kuma_data:/app/data
+    profiles:
+      - monitor
     depends_on:
       app:
         condition: service_healthy
