@@ -1,92 +1,51 @@
-# Каменный двор — плитка и шлакоблок
+# Каменный двор
 
-Сайт-каталог тротуарной плитки, шлакоблока и бордюра со склада: каталог, карточки товаров, калькулятор площади, корзина/заказы, админка.
-
-## Стек
-
-- Сервер: Go 1.26 (`cmd/server`), SQLite (`modernc.org/sqlite`).
-- Фронтенд: статический HTML/CSS/JS, без сборщика.
-- Данные: `data/shop.db` (SQLite, WAL).
-
-## Быстрый старт (локально)
-
-```powershell
-go mod download
-go run ./cmd/server
-```
-
-Откройте http://127.0.0.1:4173/
-
-Или используйте готовый бинарник:
-
-```powershell
-.\kd-server.exe
-```
-
-Сервер должен запускаться из корня проекта (рядом с `index.html`).
-
-## Переменные окружения
-
-| Переменная | Описание | По умолчанию |
-|---|---|---|
-| `KD_ADDR` | Адрес прослушивания | `127.0.0.1:4173` |
-| `KD_ADMIN_USER` | Логин администратора (создаётся/обновляется при запуске) | генерируется при первом запуске |
-| `KD_ADMIN_PASSWORD` | Пароль администратора | генерируется при первом запуске |
-| `KD_SMTP_HOST` | SMTP-хост для писем клиентам | — |
-| `KD_SMTP_PORT` | SMTP-порт | `587` |
-| `KD_SMTP_USER` | SMTP-логин | — |
-| `KD_SMTP_PASSWORD` | SMTP-пароль | — |
-| `KD_SMTP_FROM` | Адрес отправителя | `KD_SMTP_USER` |
-
-Если `KD_ADMIN_USER`/`KD_ADMIN_PASSWORD` не заданы и учёток нет, сервер один раз сгенерирует пару и выведет её в лог.
-
-## Админка
-
-- URL: http://127.0.0.1:4173/admin/
-- Вход по логину/паролю (учётка `admin_user` в БД).
-- Управление каталогом, текстами, баннером, фото, лидами и сотрудниками.
-
-## Деплой
-
-### Docker + HTTPS
-
-1. Скопируйте `.env.example` в `.env` и укажите `KD_DOMAIN` (ваш домен).
-2. В DNS создайте записи `A` (и при желании `AAAA`) для домена и `www` на IP сервера.
-3. Откройте снаружи порты **80** и **443**.
-4. Запуск:
-
-```powershell
-docker compose up -d --build
-```
-
-Caddy сам получит сертификат Let's Encrypt. Сайт: `https://ваш-домен`.  
-Локально без домена по-прежнему: `docker compose up -d --build app` → http://127.0.0.1:4173/  
-Мониторинг (опционально): `docker compose --profile monitor up -d`
-
-### systemd (Linux)
+## 1. Скопировать на сервер
 
 ```bash
-sudo cp deploy/kamenniy-dvor.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now kamenniy-dvor
+scp -r ./plitka_i_shlakablokyn user@SERVER_IP:~/plitka
+cd ~/plitka
+cp .env.example .env
 ```
 
-### Windows-служба
+В `.env` указать `KD_DOMAIN`, логин и пароль админки.
 
-Используйте NSSM или `sc create` (см. `deploy/windows-service.ps1`).
+## 2. Сбилдить бинарник (на машине, где есть Go)
 
-## Мониторинг
+Linux-сервер:
 
-- Uptime Kuma доступен на http://127.0.0.1:3001 (или ваш домен).
-- Добавьте монитор HTTP(s) на `http://app:4173/healthz` (внутри compose-сети) или `https://ваш-домен/healthz`.
-- Настройте уведомления (Telegram/Email) в Uptime Kuma.
+```bash
+CGO_ENABLED=0 go build -o kd-server ./cmd/server
+```
 
-База: `data/shop.db` (+ WAL-файлы). Рекомендуется регулярный бэкап:
+С Windows под Linux-сервер:
 
 ```powershell
-.\deploy\backup.ps1
+$env:GOOS="linux"; $env:GOARCH="amd64"; $env:CGO_ENABLED="0"
+go build -o kd-server ./cmd/server
+scp .\kd-server user@SERVER_IP:~/plitka/
 ```
 
-## Лицензия
+## 3. Запустить просто
 
-Проприетарно. Все права защищены.
+```bash
+./kd-server
+```
+
+Сайт: http://127.0.0.1:4173/
+
+## 4. Запустить в Docker
+
+Сначала нужен файл `kd-server` в корне проекта (п. 2).
+
+```bash
+docker compose up -d --build app
+```
+
+Сайт: http://127.0.0.1:4173/
+
+С HTTPS (DNS + порты 80/443):
+
+```bash
+docker compose up -d --build
+```
