@@ -540,7 +540,10 @@ func serveStatic(root string, w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if r.URL.RawQuery != "" {
+	if rel == "data/admin.js" {
+		// Файл каталога перезаписывается из админки: кэшировать его надолго нельзя.
+		w.Header().Set("Cache-Control", "no-cache")
+	} else if r.URL.RawQuery != "" {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	} else {
 		w.Header().Set("Cache-Control", "no-cache")

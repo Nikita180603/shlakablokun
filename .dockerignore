@@ -3,6 +3,7 @@
 .env
 .env.*
 data
+img/custom
 kd-server.exe
 kd-server-linux
 *.log

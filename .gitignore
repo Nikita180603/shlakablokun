@@ -1,12 +1,12 @@
 # База содержит заказы, заявки и отпечаток пароля администратора.
-data/shop.db
-data/shop.db-shm
-data/shop.db-wal
-data/shop.db-journal
+data/
 
 # Локально собранный сервер.
-kd-server.exe
+kd-server*
 *.exe
+
+# Фото товаров, загруженные из админки.
+img/custom/
 
 # Секреты окружения нельзя хранить в Git.
 .env
@@ -23,8 +23,3 @@ kd-server.exe
 Thumbs.db
 .vscode/
 .idea/
-
-# ������ � ��������� (�� ���������)
-data/
-kd-server*
-

@@ -6,6 +6,7 @@ services:
       - "127.0.0.1:4173:4173"
     volumes:
       - ./data:/app/data
+      - ./img/custom:/app/img/custom
     environment:
       KD_ADDR: 0.0.0.0:4173
       KD_ADMIN_USER: ${KD_ADMIN_USER:-}

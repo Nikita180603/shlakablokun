@@ -1741,62 +1741,53 @@
       .join("");
   }
 
-  function favButton(product, colorId, icon) {
+  function favButton(product, colorId) {
     const on = !!findFav(product.id, colorId);
-    if (icon) {
-      return (
-        '<button type="button" class="card-fav' +
-        (on ? " is-on" : "") +
-        '" data-action="fav" data-id="' +
-        product.id +
-        '" data-color="' +
-        colorId +
-        '" aria-label="' +
-        esc(on ? t("product.favOn") : t("product.fav")) +
-        '" aria-pressed="' +
-        on +
-        '">' +
-        (on ? "♥" : "♡") +
-        "</button>"
-      );
-    }
+    const label = on ? t("product.favOn") : t("product.fav");
     return (
-      '<button type="button" class="btn btn-line paper-line' +
+      '<button type="button" class="btn btn-line paper-line card-fav' +
       (on ? " is-on" : "") +
       '" data-action="fav" data-id="' +
       product.id +
       '" data-color="' +
       colorId +
+      '" aria-label="' +
+      esc(label) +
+      '" title="' +
+      esc(label) +
       '" aria-pressed="' +
       on +
-      '">' +
-      (on ? esc(t("product.favOn")) : esc(t("product.fav"))) +
-      "</button>"
+      '"><span class="card-fav-ico" aria-hidden="true">' +
+      (on ? "♥" : "♡") +
+      "</span></button>"
     );
   }
-  function favIconButton(product, colorId) { return favButton(product, colorId, true); }
 
   function paintFav(btn) {
     const on = !!findFav(btn.dataset.id, btn.dataset.color);
     btn.classList.toggle("is-on", on);
     btn.setAttribute("aria-pressed", String(on));
     if (btn.classList.contains("card-fav")) {
-      btn.textContent = on ? "♥" : "♡";
-      btn.setAttribute("aria-label", on ? t("product.favOn") : t("product.fav"));
-    } else {
-      btn.textContent = on ? t("product.favOn") : t("product.fav");
+      const label = on ? t("product.favOn") : t("product.fav");
+      btn.setAttribute("aria-label", label);
+      btn.setAttribute("title", label);
+      const ico = btn.querySelector(".card-fav-ico");
+      if (ico) ico.textContent = on ? "♥" : "♡";
     }
   }
 
-  function compareMark(id) {
+  function compareMark(id, inCard) {
     const on = compare.indexOf(id) !== -1;
     return (
-      '<button type="button" class="card-compare' +
+      '<button type="button" class="btn btn-line paper-line' +
+      (inCard ? " card-compare" : "") +
       (on ? " is-on" : "") +
       '" data-action="compare" data-id="' +
       id +
+      '" aria-pressed="' +
+      on +
       '">' +
-      (on ? "В сравнении" : "Сравнить") +
+      (inCard ? "Сравнить" : on ? "В сравнении" : "Сравнить") +
       "</button>"
     );
   }
@@ -1859,7 +1850,6 @@
       '">' +
       esc(p.stock) +
       "</span></a>" +
-      favIconButton(p, color.id) +
       '<button type="button" class="btn card-quick" data-action="buy" data-id="' +
       p.id +
       '" data-color="' +
@@ -1893,7 +1883,8 @@
       "</span></div>" +
       yardPriceHtml(p, color.id) +
       '<div class="card-actions">' +
-      compareMark(p.id) +
+      compareMark(p.id, true) +
+      favButton(p, color.id) +
       '<button type="button" class="btn" data-action="add" data-id="' +
       p.id +
       '" data-qty="' +
@@ -3379,7 +3370,7 @@
           p.id +
           '">' +
           esc(p.name) +
-          '</a><div><button type="button" class="card-compare" data-action="compare" data-id="' +
+          '</a><div><button type="button" class="btn btn-line paper-line compare-remove" data-action="compare" data-id="' +
           p.id +
           '">Убрать</button></div></th>'
       )
@@ -3444,6 +3435,8 @@
       if (btn.textContent === "Убрать") return;
       const on = compare.indexOf(btn.dataset.id) !== -1;
       btn.classList.toggle("is-on", on);
+      btn.setAttribute("aria-pressed", String(on));
+      if (btn.classList.contains("card-compare")) return;
       btn.textContent = on ? "В сравнении" : "Сравнить";
     });
     renderCompareDock();

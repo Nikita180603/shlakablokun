@@ -78,6 +78,8 @@
     if (photos[id]) return photos[id];
     var file = window.KD_ADMIN_FILE;
     if (file && Array.isArray(file.photos) && file.photos.indexOf(id) !== -1) return "img/custom/" + id + ".jpg";
+    var product = (window.PRODUCTS || []).filter(function (p) { return p.id === id; })[0];
+    if (product && product.custom) return "img/placeholder.svg";
     return "img/" + id + ".jpg";
   }
 
@@ -223,6 +225,66 @@
     }
   }
 
+  function customProduct(id, patch) {
+    var names = patch.colors && typeof patch.colors === "object" ? patch.colors : {};
+    var colors = Object.keys(names).map(function (key) {
+      return {
+        id: key,
+        name: names[key],
+        hex: (patch.hex && patch.hex[key]) || "#8d8d86",
+      };
+    });
+    if (!colors.length) colors.push({ id: "gray", name: "Серый", hex: "#8d8d86" });
+    return {
+      id: id,
+      custom: true,
+      category: patch.category || "tile",
+      shape: patch.shape || (patch.category === "bulk" ? "sand" : "brick"),
+      name: patch.name || id,
+      size: patch.size || "",
+      thickness: Number(patch.thickness) || 60,
+      price: Number(patch.price) || 0,
+      unit: patch.unit || "м²",
+      step: 1,
+      defaultQty: 10,
+      pcsPerM2: Number(patch.pcsPerM2) || 1,
+      piecesLabel: patch.piecesLabel || "",
+      pallet: patch.pallet || "",
+      mark: patch.mark || "",
+      frost: patch.frost || "",
+      standard: patch.standard || "",
+      weight: patch.weight || "",
+      usage: patch.usage || "",
+      lead: patch.lead || "",
+      inputLabel: patch.inputLabel || "Количество",
+      stock: patch.stock || "В наличии",
+      popular: !!patch.popular,
+      hidden: !!patch.hidden,
+      colors: colors,
+    };
+  }
+
+  function patchProduct(product, patch) {
+    if (patch.name) product.name = patch.name;
+    if (patch.price != null && patch.price !== "") product.price = Number(patch.price) || 0;
+    if (patch.stock) product.stock = patch.stock;
+    if (patch.popular != null) product.popular = !!patch.popular;
+    if (patch.hidden != null) product.hidden = !!patch.hidden;
+    if (patch.category) product.category = patch.category;
+    if (patch.unit) product.unit = patch.unit;
+    if (patch.thickness != null && patch.thickness !== "") product.thickness = Number(patch.thickness) || 0;
+    if (patch.pcsPerM2 != null && patch.pcsPerM2 !== "") product.pcsPerM2 = Number(patch.pcsPerM2) || 0;
+    ["lead", "size", "piecesLabel", "pallet", "mark", "frost", "standard", "weight", "usage", "inputLabel"].forEach(function (key) {
+      if (patch[key] != null) product[key] = patch[key];
+    });
+    if (patch.colors && typeof patch.colors === "object") {
+      product.colors.forEach(function (color) {
+        if (patch.colors[color.id]) color.name = patch.colors[color.id];
+        if (patch.hex && patch.hex[color.id]) color.hex = patch.hex[color.id];
+      });
+    }
+  }
+
   function applyOverrides() {
     applyCopy();
     if (!window.SITE || !window.PRODUCTS) return;
@@ -245,23 +307,20 @@
     }
     var patches = stored(PRODUCT_KEY, "products") || {};
     if (!patches || typeof patches !== "object") return;
-    PRODUCTS.forEach(function (product) {
-      var patch = patches[product.id];
-      if (!patch) return;
-      if (patch.name) product.name = patch.name;
-      if (patch.price != null && patch.price !== "") product.price = Number(patch.price) || 0;
-      if (patch.stock) product.stock = patch.stock;
-      if (patch.popular != null) product.popular = !!patch.popular;
-      if (patch.hidden != null) product.hidden = !!patch.hidden;
-      ["lead", "size", "piecesLabel", "pallet", "mark", "frost", "standard", "weight", "usage", "inputLabel"].forEach(function (key) {
-        if (patch[key] != null) product[key] = patch[key];
-      });
-      if (patch.colors && typeof patch.colors === "object") {
-        product.colors.forEach(function (color) {
-          if (patch.colors[color.id]) color.name = patch.colors[color.id];
-        });
+    Object.keys(patches).forEach(function (id) {
+      var patch = patches[id];
+      if (!patch || typeof patch !== "object") return;
+      var product = PRODUCTS.filter(function (item) { return item.id === id; })[0];
+      if (product) {
+        patchProduct(product, patch);
+        return;
       }
+      if (!patch.name || !patch.category) return;
+      PRODUCTS.push(customProduct(id, patch));
     });
+    for (var i = PRODUCTS.length - 1; i >= 0; i--) {
+      if (PRODUCTS[i].custom && !patches[PRODUCTS[i].id]) PRODUCTS.splice(i, 1);
+    }
   }
 
   function copyValue(key, fallback) {
@@ -719,7 +778,7 @@
       );
     }).join("");
     var body =
-      '<div class="ea-toolbar"><input id="admin-q" type="search" placeholder="Название" aria-label="Поиск товара"></div>' +
+      '<div class="ea-toolbar"><input id="admin-q" type="search" placeholder="Название" aria-label="Поиск товара"><a class="ea-btn" href="#/admin/products/new">Добавить товар</a></div>' +
       '<div class="ea-card"><table class="ea-table"><thead><tr><th>Название</th><th>Раздел</th><th>Цена</th><th>Наличие</th><th>Ходовой</th></tr></thead><tbody>' + rows + "</tbody></table></div>";
     return shell("products", "Товары", body);
   }
@@ -727,42 +786,75 @@
   function productHtml(id) {
     var p = PRODUCTS.filter(function (item) { return item.id === id; })[0];
     if (!p) return shell("products", "Нет такой позиции", '<p><a class="ea-back" href="#/admin/products">К списку</a></p>');
+    return productFormHtml(p);
+  }
+
+  function productFormHtml(p) {
+    var isNew = !p;
+    var cat = p ? p.category : "tile";
     var stocks = ["В наличии", "Под заказ, 3 дня", "Нет на складе"];
-    if (stocks.indexOf(p.stock) === -1) stocks.unshift(p.stock);
+    if (p && stocks.indexOf(p.stock) === -1) stocks.unshift(p.stock);
+    var units = ["м²", "шт", "м³", "т"];
+    if (p && units.indexOf(p.unit) === -1) units.unshift(p.unit);
+    var colorFields = "";
+    var colorsText = "";
+    if (isNew) {
+      colorsText = "Серый #8d8d86\nКрасный #9d3b32\nКоричневый #6d4b34";
+    } else if (p.custom) {
+      colorsText = p.colors.map(function (c) { return c.name + " " + c.hex; }).join("\n");
+    } else {
+      colorFields = p.colors.map(function (color) {
+        return '<label class="ea-field">Цвет «' + esc(color.name) + "»<input name=\"color-" + esc(color.id) + '" value="' + esc(color.name) + '"></label>';
+      }).join("");
+    }
     var body =
       '<a class="ea-back" href="#/admin/products">К списку</a>' +
-      '<form class="ea-form" id="admin-product" data-id="' + esc(p.id) + '">' +
-      '<label class="ea-field">Название<input name="name" value="' + esc(p.name) + '" required></label>' +
-      '<label class="ea-field">Коротко о позиции<textarea name="lead" rows="3">' + esc(p.lead) + "</textarea></label>" +
-      '<label class="ea-field">Куда кладут<textarea name="usage" rows="2">' + esc(p.usage) + "</textarea></label>" +
-      '<label class="ea-field">Размер на карточке<input name="size" value="' + esc(p.size) + '"></label>' +
-      '<label class="ea-field">Подпись количества в калькуляторе<input name="inputLabel" value="' + esc(p.inputLabel) + '"></label>' +
-      '<label class="ea-field">Марка<input name="mark" value="' + esc(p.mark) + '"></label>' +
-      '<label class="ea-field">Морозостойкость<input name="frost" value="' + esc(p.frost) + '"></label>' +
-      '<label class="ea-field">Норма<input name="standard" value="' + esc(p.standard) + '"></label>' +
-      '<label class="ea-field">Вес<input name="weight" value="' + esc(p.weight) + '"></label>' +
-      '<label class="ea-field">Сколько в метре<input name="piecesLabel" value="' + esc(p.piecesLabel) + '"></label>' +
-      '<label class="ea-field">Поддон<input name="pallet" value="' + esc(p.pallet) + '"></label>' +
-      p.colors.map(function (color) {
-        return '<label class="ea-field">Цвет «' + esc(color.name) + "»<input name=\"color-" + esc(color.id) + '" value="' + esc(color.name) + '"></label>';
+      '<form class="ea-form" id="admin-product" data-id="' + esc(p ? p.id : "") + '">' +
+      '<label class="ea-field">Название<input name="name" value="' + esc(p ? p.name : "") + '" required></label>' +
+      '<label class="ea-field">Раздел<select name="category">' +
+      [["tile", "Плитка"], ["block", "Шлакоблок"], ["border", "Бордюр"], ["bulk", "Сыпучие"]].map(function (row) {
+        return '<option value="' + row[0] + '"' + (row[0] === cat ? " selected" : "") + ">" + row[1] + "</option>";
       }).join("") +
-      '<label class="ea-field">Цена, ₽ за ' + esc(p.unit) + '<input name="price" inputmode="decimal" value="' + esc(p.price) + '" required></label>' +
-      '<label class="ea-field">Наличие<select name="stock">' + stocks.map(function (name) {
-        return '<option' + (name === p.stock ? " selected" : "") + ">" + esc(name) + "</option>";
+      "</select></label>" +
+      '<label class="ea-field">Коротко о позиции<textarea name="lead" rows="3">' + esc(p ? p.lead : "") + "</textarea></label>" +
+      '<label class="ea-field">Куда кладут<textarea name="usage" rows="2">' + esc(p ? p.usage : "") + "</textarea></label>" +
+      '<label class="ea-field">Размер на карточке<input name="size" value="' + esc(p ? p.size : "") + '"></label>' +
+      '<label class="ea-field">Толщина, мм<input name="thickness" inputmode="decimal" value="' + esc(p ? p.thickness : "60") + '"></label>' +
+      '<label class="ea-field">Штук в 1 м²<input name="pcsPerM2" inputmode="decimal" value="' + esc(p ? p.pcsPerM2 : "1") + '"></label>' +
+      '<label class="ea-field">Подпись количества в калькуляторе<input name="inputLabel" value="' + esc(p ? p.inputLabel : "") + '"></label>' +
+      '<label class="ea-field">Марка<input name="mark" value="' + esc(p ? p.mark : "") + '"></label>' +
+      '<label class="ea-field">Морозостойкость<input name="frost" value="' + esc(p ? p.frost : "") + '"></label>' +
+      '<label class="ea-field">Норма<input name="standard" value="' + esc(p ? p.standard : "") + '"></label>' +
+      '<label class="ea-field">Вес<input name="weight" value="' + esc(p ? p.weight : "") + '"></label>' +
+      '<label class="ea-field">Сколько в метре<input name="piecesLabel" value="' + esc(p ? p.piecesLabel : "") + '"></label>' +
+      '<label class="ea-field">Поддон<input name="pallet" value="' + esc(p ? p.pallet : "") + '"></label>' +
+      colorFields +
+      (isNew || (p && p.custom)
+        ? '<label class="ea-field">Цвета — по одному в строке, можно с кодом<textarea name="colors" rows="3" placeholder="Серый #8d8d86">' + esc(colorsText) + "</textarea></label>"
+        : "") +
+      '<label class="ea-field">Цена, ₽ за единицу<input name="price" inputmode="decimal" value="' + esc(p ? p.price : "") + '" required></label>' +
+      '<label class="ea-field">Единица<select name="unit">' + units.map(function (name) {
+        return '<option' + (p && name === p.unit ? " selected" : "") + ">" + esc(name) + "</option>";
       }).join("") + "</select></label>" +
-      '<label class="ea-check"><input type="checkbox" name="popular"' + (p.popular ? " checked" : "") + "> Ходовой, выше в каталоге</label>" +
-      '<label class="ea-check"><input type="checkbox" name="hidden"' + (p.hidden ? " checked" : "") + "> Скрыть с витрины</label>" +
-      '<label class="ea-field">Фото фактуры<img class="ea-photo" id="admin-photo-preview" alt="Фото ' + esc(p.name) + '" src="' + esc(photoSrc(p.id)) + '">' +
+      '<label class="ea-field">Наличие<select name="stock">' + stocks.map(function (name) {
+        return '<option' + (p && name === p.stock ? " selected" : "") + ">" + esc(name) + "</option>";
+      }).join("") + "</select></label>" +
+      '<label class="ea-check"><input type="checkbox" name="popular"' + (p && p.popular ? " checked" : "") + "> Ходовой, выше в каталоге</label>" +
+      '<label class="ea-check"><input type="checkbox" name="hidden"' + (p && p.hidden ? " checked" : "") + "> Скрыть с витрины</label>" +
+      '<label class="ea-field">Фото фактуры<img class="ea-photo" id="admin-photo-preview" alt="Фото товара"' + (p ? ' src="' + esc(photoSrc(p.id)) + '"' : " hidden") + '>' +
       '<input id="admin-photo" name="photo" type="file" accept="image/*"></label>' +
-      (photos[p.id]
+      (p && photos[p.id]
         ? '<label class="ea-check"><input type="checkbox" name="dropPhoto"> Убрать загруженное и вернуть складской снимок</label>'
         : "") +
-      '<p class="ea-note">На витрине снимок открывается переключателем «Фото». Цвет заказа по-прежнему красится только на модели.</p>' +
-      '<button class="ea-btn" type="submit">Сохранить</button>' +
+      '<p class="ea-note">Без фото на витрине показывается заглушка. Цвет заказа по-прежнему красится только на модели.</p>' +
+      '<button class="ea-btn" type="submit">' + (isNew ? "Добавить товар" : "Сохранить") + "</button>" +
+      (p && p.custom
+        ? '<button class="ea-btn ea-btn-line ea-danger" type="button" id="admin-product-delete">Удалить товар</button>'
+        : "") +
       '<p class="ea-error" id="admin-photo-error" hidden>Не удалось прочитать фото. Выберите другой файл.</p>' +
-      '<p class="ea-note" id="admin-saved" hidden>Сохранено. В каталоге уже новые цена и фото.</p>' +
+      '<p class="ea-note" id="admin-saved" hidden>Сохранено.</p>' +
       "</form>";
-    return shell("products", p.name, body);
+    return shell("products", isNew ? "Новый товар" : p.name, body);
   }
 
   function deliveryPrice(id) {
@@ -919,6 +1011,7 @@
     if (section === "orders" && parts[2]) return orderHtml(decodeURIComponent(parts[2]));
     if (section === "orders") return ordersHtml();
     if (section === "callbacks") return callbacksHtml();
+    if (section === "products" && parts[2] === "new") return productFormHtml(null);
     if (section === "products" && parts[2]) return productHtml(decodeURIComponent(parts[2]));
     if (section === "products") return productsHtml();
     if (section === "pages" && parts[2]) return pageCopyHtml(parts[2]);
@@ -1099,19 +1192,40 @@
       var preview = productForm.querySelector("#admin-photo-preview");
       if (photoInput && preview) {
         photoInput.addEventListener("change", function () {
-          var file = photoInput.files && photoInput.files[0];
-          if (!file) return;
-          var url = URL.createObjectURL(file);
-          preview.src = url;
+          var picked = photoInput.files && photoInput.files[0];
+          if (!picked) return;
+          preview.src = URL.createObjectURL(picked);
+          preview.hidden = false;
+        });
+      }
+      var deleteBtn = productForm.querySelector("#admin-product-delete");
+      if (deleteBtn) {
+        deleteBtn.addEventListener("click", function () {
+          var id = productForm.dataset.id;
+          if (!id || !window.confirm("Удалить товар из каталога? Действие нельзя отменить.")) return;
+          var patches = stored(PRODUCT_KEY, "products") || {};
+          if (!patches || typeof patches !== "object") patches = {};
+          delete patches[id];
+          write(PRODUCT_KEY, patches);
+          applyOverrides();
+          publish({ products: patches }).then(function () {
+            deletePhoto(id);
+            dropFilePhoto(id).catch(function () {});
+            location.hash = "#/admin/products";
+            repaint();
+          }, function () {
+            markSaved(document.getElementById("admin-saved"), false);
+          });
         });
       }
       productForm.addEventListener("submit", function (e) {
         e.preventDefault();
-        var id = productForm.dataset.id;
+        var isNew = !productForm.dataset.id;
+        var id = productForm.dataset.id || "p" + Date.now().toString(36);
         var fields = productForm.elements;
         var file = fields.photo.files && fields.photo.files[0];
         var drop = fields.dropPhoto && fields.dropPhoto.checked && !file;
-        var button = productForm.querySelector("button");
+        var button = productForm.querySelector("button[type=submit]");
         var fail = productForm.querySelector("#admin-photo-error");
         if (button) button.disabled = true;
         if (fail) fail.hidden = true;
@@ -1123,11 +1237,15 @@
         photoJob.then(function () {
           var patches = stored(PRODUCT_KEY, "products") || {};
           if (!patches || typeof patches !== "object") patches = {};
-          patches[id] = {
+          var patch = {
             name: fields.name.value.trim(),
+            category: fields.category.value,
+            unit: fields.unit.value,
             lead: fields.lead.value.trim(),
             usage: fields.usage.value.trim(),
             size: fields.size.value.trim(),
+            thickness: fields.thickness.value.trim(),
+            pcsPerM2: fields.pcsPerM2.value.trim(),
             inputLabel: fields.inputLabel.value.trim(),
             mark: fields.mark.value.trim(),
             frost: fields.frost.value.trim(),
@@ -1141,15 +1259,39 @@
             popular: fields.popular.checked,
             hidden: fields.hidden.checked,
           };
-          Array.prototype.forEach.call(fields, function (field) {
-            if (field.name && field.name.indexOf("color-") === 0 && field.value.trim()) {
-              patches[id].colors[field.name.slice(6)] = field.value.trim();
+          if (isNew) patch.custom = true;
+          if (fields.colors) {
+            patch.hex = {};
+            String(fields.colors.value).split(/\n|,/).forEach(function (line) {
+              var row = line.trim();
+              if (!row) return;
+              var match = row.match(/^(.*?)\s*(#[0-9a-fA-F]{3,8})?$/);
+              var name = (match && match[1] ? match[1] : row).trim() || "Цвет";
+              var key = "c" + (Object.keys(patch.colors).length + 1);
+              patch.colors[key] = name;
+              if (match && match[2]) patch.hex[key] = match[2];
+            });
+            if (!Object.keys(patch.colors).length) {
+              patch.colors.c1 = "Серый";
+              patch.hex.c1 = "#8d8d86";
             }
-          });
+          } else {
+            Array.prototype.forEach.call(fields, function (field) {
+              if (field.name && field.name.indexOf("color-") === 0 && field.value.trim()) {
+                patch.colors[field.name.slice(6)] = field.value.trim();
+              }
+            });
+          }
+          patches[id] = patch;
           write(PRODUCT_KEY, patches);
           applyOverrides();
           if (button) button.disabled = false;
           publish({ products: patches }).then(function () {
+            if (isNew) {
+              location.hash = "#/admin/products";
+              repaint();
+              return;
+            }
             if (file || drop) repaint();
             markSaved(document.getElementById("admin-saved"), true);
           }, function () {

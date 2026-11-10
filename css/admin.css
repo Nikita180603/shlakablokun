@@ -209,6 +209,17 @@ body.is-admin .toast { display: none; }
   width: fit-content;
 }
 .ea-btn:hover { background: #c4512a; }
+a.ea-btn {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+}
+.ea-toolbar .ea-btn { margin-left: auto; }
+.ea-danger {
+  background: #8d3014;
+  color: #fff;
+}
+.ea-danger:hover { background: #b03b1c; }
 
 .ea-error {
   background: #fde8e4;
