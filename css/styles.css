@@ -187,6 +187,7 @@ h1, h2, h3 { font-family: var(--display); font-weight: 600; letter-spacing: -0.0
   height: 100%;
   border-top: 2px solid var(--ink);
   border-bottom: 2px solid var(--ink);
+  border-radius: 999px;
   transform: scaleY(2);
 }
 
@@ -194,6 +195,7 @@ h1, h2, h3 { font-family: var(--display); font-weight: 600; letter-spacing: -0.0
   top: 2px;
   height: 100%;
   background: var(--ink);
+  border-radius: 999px;
   transform: scale(0);
   z-index: -1;
 }
