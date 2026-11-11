@@ -1845,11 +1845,8 @@
       (photoFirst ? "photo" : "model") +
       '">' +
       media +
-      '<span class="badge' +
-      (wait ? " badge-wait" : "") +
-      '">' +
-      esc(p.stock) +
-      "</span></a>" +
+      (wait ? '<span class="badge badge-wait">' + esc(p.stock) + "</span>" : "") +
+      "</a>" +
       '<button type="button" class="btn card-quick" data-action="buy" data-id="' +
       p.id +
       '" data-color="' +
