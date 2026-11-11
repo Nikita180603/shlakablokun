@@ -1194,13 +1194,11 @@
     if (!media || !product) return;
     if (colorId) media.dataset.color = colorId;
     const color = media.dataset.color || product.colors[0].id;
-    const badge = media.querySelector(".badge");
     if (media.dataset.view === "photo") {
       media.innerHTML = photoHtml(product, color);
     } else {
       media.innerHTML = viz(product, color, media._modelYaw);
     }
-    if (badge) media.appendChild(badge);
     const frame = media.parentElement;
     if (frame && frame.classList.contains("media-frame")) frame.classList.toggle("is-photo", media.dataset.view === "photo");
   }
@@ -1831,7 +1829,6 @@
   function cardHtml(p, photoFirst) {
     const color = p.colors[0];
     const second = cardExtra(p);
-    const wait = p.stock !== "В наличии";
     const media = photoFirst ? photoHtml(p, color.id) : viz(p, color.id);
     return (
       '<article class="card" data-color-scope>' +
@@ -1845,7 +1842,6 @@
       (photoFirst ? "photo" : "model") +
       '">' +
       media +
-      (wait ? '<span class="badge badge-wait">' + esc(p.stock) + "</span>" : "") +
       "</a>" +
       '<button type="button" class="btn card-quick" data-action="buy" data-id="' +
       p.id +
