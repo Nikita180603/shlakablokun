@@ -297,6 +297,9 @@
       }
       if (site.hours) SITE.hours = site.hours;
       if (site.address) SITE.address = site.address;
+      SITE.orgName = site.orgName || SITE.orgName || "";
+      SITE.inn = site.inn || SITE.inn || "";
+      SITE.ogrn = site.ogrn || SITE.ogrn || "";
       if (site.delivery && SITE.delivery) {
         SITE.delivery.forEach(function (row) {
           if (site.delivery[row.id] != null && site.delivery[row.id] !== "") {
@@ -869,6 +872,9 @@
       '<label class="ea-field">Телефон<input name="phone" value="' + esc(SITE.phone) + '" required></label>' +
       '<label class="ea-field">Часы<input name="hours" value="' + esc(SITE.hours) + '" required></label>' +
       '<label class="ea-field">Адрес<input name="address" value="' + esc(SITE.address) + '" required></label>' +
+      '<label class="ea-field">Название организации / ИП<input name="orgName" value="' + esc(SITE.orgName || "") + '"></label>' +
+      '<label class="ea-field">ИНН<input name="inn" inputmode="numeric" value="' + esc(SITE.inn || "") + '"></label>' +
+      '<label class="ea-field">ОГРНИП или ОГРН<input name="ogrn" inputmode="numeric" value="' + esc(SITE.ogrn || "") + '"></label>' +
       '<label class="ea-field">Доставка по городу, ₽<input name="city" inputmode="decimal" value="' + esc(deliveryPrice("city")) + '"></label>' +
       '<label class="ea-field">До 30 км, ₽<input name="near" inputmode="decimal" value="' + esc(deliveryPrice("near")) + '"></label>' +
       '<button class="ea-btn" type="submit">Сохранить</button>' +
@@ -1313,6 +1319,9 @@
         saved.phone = fields.phone.value.trim();
         saved.hours = fields.hours.value.trim();
         saved.address = fields.address.value.trim();
+        saved.orgName = fields.orgName.value.trim();
+        saved.inn = fields.inn.value.trim();
+        saved.ogrn = fields.ogrn.value.trim();
         saved.delivery = saved.delivery || {};
         saved.delivery.city = Number(String(fields.city.value).replace(",", ".")) || 0;
         saved.delivery.near = Number(String(fields.near.value).replace(",", ".")) || 0;

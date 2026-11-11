@@ -1871,11 +1871,11 @@
       '<p class="kicker-line">' +
       esc(cardKicker(p)) +
       "</p>" +
-      "<h3><a href=\"#/product/" +
+      "<h2><a href=\"#/product/" +
       p.id +
       '">' +
       esc(p.name) +
-      "</a></h3>" +
+      "</a></h2>" +
       '<p class="meta"><span>' +
       esc(p.size) +
       " · " +
@@ -3134,6 +3134,33 @@
     );
   }
 
+  function renderPrivacy() {
+    const sections = [
+      ["privacy.dataTitle", "privacy.data"],
+      ["privacy.purposeTitle", "privacy.purpose"],
+      ["privacy.storageTitle", "privacy.storage"],
+      ["privacy.rightsTitle", "privacy.rights"],
+      ["privacy.contactTitle", "privacy.contact"],
+    ];
+    return (
+      '<section class="page"><div class="wrap">' +
+      pageHead(t("privacy.title"), t("privacy.lede")) +
+      '<div class="sheet privacy"><p class="note">' + esc(t("privacy.updated")) + "</p>" +
+      sections
+        .map((row) => "<h2>" + esc(t(row[0])) + "</h2><p>" + lines(row[1]) + "</p>")
+        .join("") +
+      "</div></div></section>"
+    );
+  }
+
+  function consentHtml() {
+    return (
+      '<label class="field consent"><input type="checkbox" required><span>' +
+      esc(t("chrome.consent")) +
+      ' <a href="#/privacy">' + esc(t("chrome.consentLink")) + "</a></span></label>"
+    );
+  }
+
   function renderDelivery() {
     const zones = SITE.delivery
       .map((d) => {
@@ -3153,7 +3180,8 @@
       pageHead(t("delivery.title"), t("delivery.lede")) +
       '<div class="zones">' +
       zones +
-      '</div><h2 style="margin-top:28px">' + esc(t("delivery.before")) + "</h2>" +
+      '</div><h2 style="margin-top:28px">' + esc(t("delivery.payTitle")) + "</h2><p>" + lines("delivery.payLead") + "</p>" +
+      '<h2 style="margin-top:28px">' + esc(t("delivery.before")) + "</h2>" +
       "<details open><summary>" + esc(t("delivery.q1")) + "</summary><p>" + lines("delivery.a1") + "</p></details>" +
       "<details><summary>" + esc(t("delivery.q2")) + "</summary><p>" + lines("delivery.a2") + "</p></details>" +
       "<details><summary>" + esc(t("delivery.q3")) + "</summary><p>" + lines("delivery.a3") + "</p></details>" +
@@ -3162,7 +3190,16 @@
     );
   }
 
+  function siteRequisites() {
+    const rows = [];
+    if (SITE.orgName) rows.push(SITE.orgName);
+    if (SITE.inn) rows.push("ИНН " + SITE.inn);
+    if (SITE.ogrn) rows.push("ОГРНИП/ОГРН " + SITE.ogrn);
+    return rows.map(esc).join("<br>");
+  }
+
   function renderContacts() {
+    const req = siteRequisites();
     return (
       '<section class="page"><div class="wrap contacts"><div>' +
       pageHead(t("contacts.title"), t("contacts.lede")) +
@@ -3177,14 +3214,19 @@
       esc(SITE.address) +
       "</p>" +
       (canEmail() ? "<p><a href=\"mailto:" + esc(SITE.email) + "\">" + esc(SITE.email) + "</a></p>" : "") +
-      '<div class="map"><p class="eyebrow">' + esc(t("contacts.mapEyebrow")) + "</p><strong>" +
-      esc(SITE.address) +
-      '</strong><p class="note">' + esc(t("contacts.mapNote")) + "</p></div></div>" +
+      '<div class="map"><div class="map-frame"><iframe title="Схема проезда к складу" loading="lazy" data-map-frame src="https://yandex.ru/map-widget/v1/?text=' +
+      encodeURIComponent(SITE.address) +
+      '&z=16"></iframe></div><a class="btn btn-line paper-line map-open" target="_blank" rel="noopener" href="https://yandex.ru/maps/?text=' +
+      encodeURIComponent(SITE.address) + '">Открыть в Яндекс.Картах</a><p class="note">' + esc(SITE.address) + "</p></div>" +
+      '<div class="about-block"><h2>' + esc(t("contacts.aboutTitle")) + "</h2><p>" + lines("contacts.aboutLead") + "</p>" +
+      (req ? "<h2>" + esc(t("contacts.reqTitle")) + "</h2><p>" + req + "</p>" : "") +
+      "</div></div>" +
       '<div class="sheet" id="contact-box"><h2>' + esc(t("contacts.formTitle")) + '</h2><form id="contact-form">' +
       '<label class="field"><span>' + esc(t("contacts.name")) + '</span><input name="name" autocomplete="name" required></label>' +
       '<label class="field"><span>' + esc(t("contacts.phone")) + '</span><input name="phone" autocomplete="tel" inputmode="tel" required></label>' +
       '<label class="field"><span>' + esc(t("contacts.need")) + '</span><textarea name="comment" placeholder="' + esc(t("contacts.needPh")) + '"></textarea></label>' +
       '<p class="form-error" hidden></p>' +
+      consentHtml() +
       '<button class="btn" type="submit">' + esc(t("contacts.submit")) + "</button>" +
       '<p class="note">' +
       esc(canEmail() ? t("contacts.noteMail") : t("contacts.noteCall")) +
@@ -3250,7 +3292,9 @@
           '<label class="field"><span>' + esc(t("contacts.phone")) + '</span><input name="phone" autocomplete="tel" inputmode="tel" required></label>' +
           '<label class="field"><span>' + esc(t("cart.email")) + '</span><input name="mail" type="email" autocomplete="email" inputmode="email" required></label>' +
           '<label class="field"><span>' + esc(t("cart.address")) + '</span><textarea name="comment"></textarea></label>' +
-          '<p class="form-error" hidden></p><button class="btn" type="submit">' + esc(t("cart.submit")) + "</button>" +
+          '<p class="form-error" hidden></p>' +
+          consentHtml() +
+          '<button class="btn" type="submit">' + esc(t("cart.submit")) + "</button>" +
           '<p class="note">' + esc(t("cart.noteMail")) + "</p></form></div></div>"
         : '<div class="empty"><p>' + esc(t("cart.empty")) + '</p><p><a class="btn" href="#/catalog">' + esc(t("cart.toCatalog")) + '</a> <a class="btn btn-line paper-line" href="#/calc">' + esc(t("cart.toCalc")) + "</a></p></div>") +
       "</div></section>"
@@ -3454,6 +3498,7 @@
     if (page === "calc") return renderCalc();
     if (page === "delivery") return renderDelivery();
     if (page === "contacts") return renderContacts();
+    if (page === "privacy") return renderPrivacy();
     if (page === "cart") return renderCart();
     if (page === "fav") return renderFav();
     if (page === "orders") return renderOrders();
@@ -3696,6 +3741,19 @@
   }
 
   function hookPage() {
+    const mapFrame = document.querySelector("[data-map-frame]");
+    if (mapFrame && !mapFrame._mapWatch) {
+      mapFrame._mapWatch = true;
+      let mapLoaded = false;
+      mapFrame.addEventListener("load", () => {
+        mapLoaded = true;
+        mapFrame.closest(".map").classList.remove("map-fail");
+        mapFrame.closest(".map").classList.add("map-ok");
+      });
+      setTimeout(() => {
+        if (!mapLoaded) mapFrame.closest(".map").classList.add("map-fail");
+      }, 8000);
+    }
     const q = document.getElementById("q");
     if (q) {
       let searchFrame = 0;
@@ -4068,7 +4126,7 @@
     if (query.get("cat") && allowed.indexOf(query.get("cat")) !== -1) state.cat = query.get("cat");
     const page = parts[0] || "home";
     if (page !== "orders") state.order = null;
-    const known = ["home", "catalog", "product", "calc", "compare", "delivery", "contacts", "cart", "fav", "orders", "admin"];
+    const known = ["home", "catalog", "product", "calc", "compare", "delivery", "contacts", "cart", "fav", "orders", "privacy", "admin"];
     const view = document.getElementById("view");
     document.body.classList.toggle("is-admin", page === "admin");
     view.innerHTML = htmlFor(known.indexOf(page) === -1 ? "missing" : page, parts);
@@ -4379,7 +4437,7 @@
       new Date().getFullYear() +
       " " +
       esc(t("chrome.logo")) +
-      "</div></div>";
+      ' · <a href="#/privacy">' + esc(t("chrome.privacy")) + "</a></div></div>";
   }
 
   window.addEventListener("kd-photos", function () {
@@ -4404,6 +4462,19 @@
     compare = loadCompare();
     renderFooter();
     fillSite();
+    const ld = document.createElement("script");
+    ld.type = "application/ld+json";
+    ld.textContent = JSON.stringify({
+      "@context": "https://schema.org",
+      "@type": "LocalBusiness",
+      name: SITE.name,
+      url: (SITE.url || "") + "/",
+      telephone: SITE.phone,
+      openingHours: SITE.hours,
+      address: { "@type": "PostalAddress", streetAddress: SITE.address, addressCountry: "RU" },
+      image: (SITE.url || "") + "/img/stary-gorod.jpg",
+    });
+    document.head.appendChild(ld);
     hookGlobal();
     render({ scroll: false });
   }
