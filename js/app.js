@@ -1703,8 +1703,20 @@
     return "за 1 шт";
   }
 
-  function cardExtra(p) {
-    if (p.category === "block") return formatMoney(p.price) + "/шт";
+  // На карточке главная цена — за штуку, вторичная — за м²/м³.
+  function cardPrimaryPrice(p) {
+    if (p.category === "tile" && p.pcsPerM2) return formatMoney(p.price / p.pcsPerM2);
+    return formatMoney(p.price);
+  }
+
+  function cardPrimaryLabel(p) {
+    if (p.category === "bulk") return offerLabel(p);
+    return "за 1 шт";
+  }
+
+  function cardSecondaryPrice(p) {
+    if (p.category === "tile" && p.pcsPerM2) return formatMoney(p.price) + " " + "за 1 м²";
+    if (p.category === "block" && p.pcsPerM2) return formatMoney(p.price * p.pcsPerM2) + " " + "за 1 м² стены";
     return secondaryPrice(p);
   }
 
@@ -1830,7 +1842,7 @@
 
   function cardHtml(p, photoFirst) {
     const color = p.colors[0];
-    const second = cardExtra(p);
+    const second = cardSecondaryPrice(p);
     const wait = p.stock !== "В наличии" && p.stock !== "Под заказ, 3 дня";
     const media = photoFirst ? photoHtml(p, color.id) : viz(p, color.id);
     return (
@@ -1872,9 +1884,9 @@
       dotsHtml(p) +
       "</span></p>" +
       '<div class="price-row"><strong>' +
-      formatMoney(offerPrice(p)) +
+      cardPrimaryPrice(p) +
       "<small> " +
-      esc(offerLabel(p)) +
+      esc(cardPrimaryLabel(p)) +
       "</small></strong><span>" +
       esc(second) +
       "</span></div>" +
