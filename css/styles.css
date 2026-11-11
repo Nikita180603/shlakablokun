@@ -1320,6 +1320,8 @@ html[data-theme="dark"] .promo-shot-block .promo-btn:hover {
   padding: 3px 7px;
 }
 
+.badge-wait { background: var(--ink); color: var(--paper); }
+
 .card-body { padding: 12px 12px 14px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
 .card-body h3 { margin: 0; font-size: 18px; }
 .card-body h3 a { text-decoration: none; }
@@ -2540,6 +2542,7 @@ button.btn[data-action="add-qty"]:active {
   .steps, .with-grid, .deals { grid-template-columns: 1fr; }
   .grid { grid-template-columns: 1fr 1fr; gap: 8px; }
   .card { border-radius: 16px; }
+  .card .badge { top: 6px; left: 6px; font-size: 10px; padding: 2px 6px; }
   .card .view-switch { bottom: 6px; }
   .card .view-btn { min-height: 24px; padding: 0 8px; font-size: 11px; }
   .card .card-body { padding: 8px 8px 10px; gap: 4px; }
