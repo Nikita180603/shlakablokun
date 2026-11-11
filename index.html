@@ -107,34 +107,11 @@
       </div>
     </div>
   </div>
-  <div class="modal" id="sample" hidden>
-    <div class="modal-bg" data-action="close-modal"></div>
-    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="sample-title">
-      <button type="button" class="modal-close" data-action="close-modal" aria-label="Закрыть">×</button>
-      <h2 id="sample-title">Привезти образцы</h2>
-      <p class="note" id="sample-hint">Можно выбрать до трёх позиций.</p>
-      <form id="sample-form">
-        <label class="field"><span>Имя</span><input name="name" autocomplete="name"></label>
-        <label class="field"><span>Телефон</span><input name="phone" autocomplete="tel" inputmode="tel"></label>
-        <label class="field"><span>Образец 1</span><select id="sample-1" name="s1"></select></label>
-        <label class="field"><span>Образец 2</span><select id="sample-2" name="s2"></select></label>
-        <label class="field"><span>Образец 3</span><select id="sample-3" name="s3"></select></label>
-        <label class="field"><span>Комментарий</span><input name="comment" placeholder="Куда привезти и когда удобно"></label>
-        <input type="hidden" name="colorNote" id="sample-color-note">
-        <p class="form-error" hidden></p>
-        <button class="btn" type="submit">Жду образцы</button>
-      </form>
-      <div id="sample-thanks" hidden>
-        <p></p>
-        <button type="button" class="btn btn-ink" data-action="close-modal">Закрыть</button>
-      </div>
-    </div>
-  </div>
   <noscript><p class="wrap">Включите JavaScript: каталог собирается в браузере.</p></noscript>
   <script src="js/data.js"></script>
   <script src="js/copy.js?v=20261105-cart-email"></script>
   <script src="data/admin.js?v=20261110-products"></script>
   <script src="js/admin.js?v=20261110-products2"></script>
-  <script src="js/app.js?v=20261111-price-swap"></script>
+  <script src="js/app.js?v=20261111-no-sample"></script>
 </body>
 </html>

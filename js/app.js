@@ -2458,11 +2458,7 @@
       color.id +
       '">Купить</button>' +
       "</div>" +
-      '<div class="product-actions"><button type="button" class="btn btn-line paper-line" data-action="sample" data-id="' +
-      p.id +
-      '" data-color="' +
-      color.id +
-      '">Привезти образцы</button>' +
+      '<div class="product-actions">' +
       compareMark(p.id) +
       "</div>" +
       "<table class=\"specs\"><tbody>" +
@@ -3969,85 +3965,8 @@
 
   function closeCallback() {
     const callback = document.getElementById("callback");
-    const sample = document.getElementById("sample");
     if (callback) callback.hidden = true;
-    if (sample) sample.hidden = true;
     document.body.classList.remove("locked");
-  }
-
-  function openSample(productId, colorId) {
-    const modal = document.getElementById("sample");
-    const form = document.getElementById("sample-form");
-    const thanks = document.getElementById("sample-thanks");
-    if (!modal || !form) return;
-    const product = productById(productId);
-    const options =
-      '<option value="">Не добавлять</option>' +
-      PRODUCTS.filter((p) => !p.hidden)
-        .map((p) => '<option value="' + p.id + '">' + esc(p.name) + "</option>")
-        .join("");
-    const note = document.getElementById("sample-color-note");
-    const color = product ? colorObj(product, colorId) : null;
-    const hint = document.getElementById("sample-hint");
-    if (hint) {
-      hint.textContent = color && product && product.colors.length > 1 ? "Первый образец: " + product.name + ", " + color.name.toLowerCase() + "." : "Можно выбрать до трёх позиций.";
-    }
-    modal.hidden = false;
-    form.hidden = false;
-    if (thanks) thanks.hidden = true;
-    form.reset();
-    ["sample-1", "sample-2", "sample-3"].forEach((id, index) => {
-      const sel = document.getElementById(id);
-      if (!sel) return;
-      sel.innerHTML = options;
-      sel.value = index === 0 && product ? product.id : "";
-    });
-    if (note) note.value = color && product && product.colors.length > 1 ? color.name : "";
-    const err = form.querySelector(".form-error");
-    if (err) err.hidden = true;
-    document.body.classList.add("locked");
-    const name = form.querySelector("input[name=name]");
-    if (name) name.focus();
-  }
-
-  function submitSample(form) {
-    const name = form.name.value.trim();
-    const phone = form.phone.value.trim();
-    if (name.length < 2) return showFormError(form, t("cart.errName"));
-    if (!validPhone(phone)) return showFormError(form, t("cart.errPhone"));
-    const ids = ["sample-1", "sample-2", "sample-3"]
-      .map((id) => {
-        const sel = document.getElementById(id);
-        return sel ? sel.value : "";
-      })
-      .filter(Boolean);
-    const unique = ids.filter((id, index) => ids.indexOf(id) === index);
-    if (!unique.length) return showFormError(form, "Выберите хотя бы одну позицию");
-    const lines = unique
-      .map((id) => {
-        const p = productById(id);
-        return p ? p.name : "";
-      })
-      .filter(Boolean)
-      .join(", ");
-    const colorNote = form.colorNote.value.trim();
-    const comment = form.comment.value.trim();
-    const n = "КД-" + String(Date.now()).slice(-6);
-    const mailed = openMail("Образцы " + n, leadText(name, phone, comment, lines + (colorNote ? "\nЦвет первого образца: " + colorNote : "")));
-    rememberLead({
-      n: n,
-      kind: "sample",
-      name: name,
-      phone: phone,
-      comment: comment,
-      lines: lines,
-      color: colorNote,
-      at: new Date().toISOString(),
-    });
-    form.hidden = true;
-    const thanks = document.getElementById("sample-thanks");
-    thanks.hidden = false;
-    thanks.querySelector("p").textContent = mailed ? t("contacts.thanksMail") : raw("contacts.thanksCall", { phone: SITE.phone });
   }
 
   function leadText(name, phone, comment, lines) {
@@ -4233,7 +4152,7 @@
       } else if (action === "pick-color") {
         const root = btn.closest("[data-color-scope]") || btn.closest(".card");
         root.querySelectorAll(".dot").forEach((d) => d.classList.toggle("is-on", d === btn));
-        root.querySelectorAll("[data-action=add], [data-action=add-qty], [data-action=buy], [data-action=fav], [data-action=sample], [data-action=open-calc]").forEach((add) => {
+        root.querySelectorAll("[data-action=add], [data-action=add-qty], [data-action=buy], [data-action=fav], [data-action=open-calc]").forEach((add) => {
           add.dataset.color = btn.dataset.color;
         });
         root.querySelectorAll("[data-action=fav]").forEach(paintFav);
@@ -4364,8 +4283,6 @@
         saveCompare();
         if ((parseRoute().parts[0] || "") === "compare") render({ scroll: false });
         else paintCompare();
-      } else if (action === "sample") {
-        openSample(btn.dataset.id, btn.dataset.color);
       } else if (action === "fav") {
         const product = productById(btn.dataset.id);
         if (!product) return;
@@ -4407,9 +4324,6 @@
         thanks.querySelector("p").textContent = mailed
           ? t("contacts.thanksMail")
           : raw("contacts.thanksCall", { phone: SITE.phone });
-      } else if (e.target.id === "sample-form") {
-        e.preventDefault();
-        submitSample(e.target);
       } else if (e.target.id === "calc-form") {
         e.preventDefault();
       }
